@@ -1,7 +1,7 @@
 package com.enigma.littlegames.common
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root composable — wires navigation, theme, achievement toast
+// Root composable — Phase 3: adds Classic Sudoku + Kakuro to screen router
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.*
@@ -20,6 +20,8 @@ import com.enigma.littlegames.ui.settings.SettingsScreen
 import com.enigma.littlegames.ui.games.lightsout.LightsOutScreen
 import com.enigma.littlegames.ui.games.pipeflow.PipeFlowScreen
 import com.enigma.littlegames.ui.games.killerSudoku.KillerSudokuScreen
+import com.enigma.littlegames.ui.games.sudoku.SudokuScreen
+import com.enigma.littlegames.ui.games.kakuro.KakuroScreen
 
 @Composable
 fun GameHubApp(hub: HubViewModel = viewModel()) {
@@ -33,12 +35,11 @@ fun GameHubApp(hub: HubViewModel = viewModel()) {
                 .fillMaxSize()
                 .background(theme.background)
         ) {
-            // ── Screen router ─────────────────────────────────────────────────
             AnimatedContent(
                 targetState = screen,
                 transitionSpec = {
-                    val enter = slideInHorizontally(tween(300)) { it } + fadeIn(tween(300))
-                    val exit  = slideOutHorizontally(tween(300)) { -it } + fadeOut(tween(300))
+                    val enter = slideInHorizontally(tween(280)) { it } + fadeIn(tween(280))
+                    val exit  = slideOutHorizontally(tween(280)) { -it } + fadeOut(tween(280))
                     enter togetherWith exit
                 },
                 label = "hub_nav",
@@ -50,10 +51,11 @@ fun GameHubApp(hub: HubViewModel = viewModel()) {
                     HubScreen.LightsOut          -> LightsOutScreen(hub)
                     HubScreen.PipeFlow           -> PipeFlowScreen(hub)
                     HubScreen.KillerSudoku       -> KillerSudokuScreen(hub)
+                    HubScreen.Sudoku             -> SudokuScreen(hub)
+                    HubScreen.Kakuro             -> KakuroScreen(hub)
                 }
             }
 
-            // ── Achievement toast (floats above every screen) ─────────────────
             AchievementToast(
                 achievement = ui.newAchievement,
                 onDismiss   = hub::dismissAchievement,

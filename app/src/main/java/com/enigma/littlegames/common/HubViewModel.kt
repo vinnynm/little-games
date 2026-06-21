@@ -1,8 +1,8 @@
 package com.enigma.littlegames.common
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HubViewModel — shared hub state: navigation, theme, cross-game stats,
-// achievement tracker, sound toggle.  Persists via PreferencesRepository.
+// HubViewModel — Phase 3: adds Classic Sudoku + Kakuro to navigation,
+// wires their win events, and tracks all-games achievement for 5 games.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import android.app.Application
@@ -18,31 +18,37 @@ import com.enigma.littlegames.domain.ThemeAmbient
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+// ── Navigation screens ────────────────────────────────────────────────────────
+
 sealed class HubScreen {
-    object Home         : HubScreen()
-    object LightsOut    : HubScreen()
-    object PipeFlow     : HubScreen()
-    object KillerSudoku : HubScreen()
-    object Settings     : HubScreen()
+    object Home               : HubScreen()
+    object LightsOut          : HubScreen()
+    object PipeFlow           : HubScreen()
+    object KillerSudoku       : HubScreen()
+    object Sudoku             : HubScreen()   // NEW — Classic Sudoku
+    object Kakuro             : HubScreen()   // NEW — Kakuro
+    object Settings           : HubScreen()
     object AchievementsScreen : HubScreen()
 }
 
+// ── UI state ──────────────────────────────────────────────────────────────────
+
 data class HubUiState(
-    val theme: GameTheme = GameThemes.CYBER,
+    val theme: GameTheme          = GameThemes.CYBER,
     val pipeLevel: Int             = 1,
     val pipeStars: Int             = 0,
     val loBestMoves: Int?          = null,
     val sudokuWins: Int            = 0,
     val soundEnabled: Boolean      = true,
     val unlockedIds: Set<String>   = emptySet(),
-    val newAchievement: Achievement? = null,   // non-null → show toast
+    val newAchievement: Achievement? = null,
 )
+
+// ── ViewModel ─────────────────────────────────────────────────────────────────
 
 class HubViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = PreferencesRepository(app.applicationContext)
-
-    // Sound engine is created once and shared; games call hub.sound.play(Sfx.X)
     val sound = SoundEngine(app.applicationContext)
 
     private val _screen = MutableStateFlow<HubScreen>(HubScreen.Home)
@@ -57,8 +63,6 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             repo.prefsFlow.collect { prefs ->
                 val theme = GameThemes.byId(prefs.themeId)
-
-                // Initialise tracker once with persisted unlocked IDs
                 if (!::tracker.isInitialized) {
                     tracker = AchievementTracker(emptySet()) { achievement ->
                         _ui.update { it.copy(newAchievement = achievement) }
@@ -67,7 +71,6 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     tracker.loadFromJson(prefs.achievementsJson)
                 }
-
                 _ui.update {
                     it.copy(
                         theme        = theme,
@@ -94,18 +97,8 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(theme: GameTheme) {
         viewModelScope.launch {
             repo.saveTheme(theme.id)
-            // Start ambient track for new theme
             sound.startAmbient(getApplication(), ThemeAmbient.resForTheme(theme.id))
-            // Track "tried all themes" achievement
-            checkThemeExplorer()
         }
-    }
-
-    private fun checkThemeExplorer() {
-        // We don't have theme history in state, so we record which themes have been set.
-        // For simplicity, each setTheme call that reaches a new theme gets stored in prefs
-        // via the themeId. A more complete impl would store a Set<String> of tried theme IDs.
-        // Left as an exercise since DataStore already records the current theme.
     }
 
     // ── Sound ─────────────────────────────────────────────────────────────────
@@ -122,9 +115,8 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch { repo.saveLOBest(moves) }
         }
         sound.play(Sfx.VICTORY)
-        // Achievements
         tryUnlock(Achievements.LO_FIRST_WIN)
-        if (best == null || moves <= _ui.value.loBestMoves ?: Int.MAX_VALUE) tryUnlock(Achievements.LO_PERFECT)
+        if (best == null || moves <= (_ui.value.loBestMoves ?: Int.MAX_VALUE)) tryUnlock(Achievements.LO_PERFECT)
         if (difficulty == "Expert") tryUnlock(Achievements.LO_EXPERT)
         if (moves <= 10) tryUnlock(Achievements.LO_SPEED)
         if (!usedHint && (difficulty == "Hard" || difficulty == "Expert")) tryUnlock(Achievements.LO_NO_HINT)
@@ -142,21 +134,20 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
         checkAllGames()
     }
 
-    // ── Killer Sudoku ─────────────────────────────────────────────────────────
+    // ── Killer Sudoku + Classic Sudoku + Kakuro (shared counter) ─────────────
     fun recordSudokuWin(difficulty: String, errorCount: Int, elapsedSecs: Long) {
         sound.play(Sfx.VICTORY)
         val newWins = _ui.value.sudokuWins + 1
         viewModelScope.launch { repo.saveSudokuWins(newWins) }
         tryUnlock(Achievements.SK_FIRST_WIN)
         if (errorCount == 0) tryUnlock(Achievements.SK_NO_ERROR)
-        if (difficulty == "Expert") tryUnlock(Achievements.SK_EXPERT)
+        if (difficulty.contains("Expert")) tryUnlock(Achievements.SK_EXPERT)
         if (newWins >= 5) tryUnlock(Achievements.SK_FIVE_WINS)
-        if (difficulty == "Medium" && elapsedSecs < 180) tryUnlock(Achievements.SK_SPEED_RUN)
+        if (difficulty.contains("Medium") && elapsedSecs < 180) tryUnlock(Achievements.SK_SPEED_RUN)
         checkAllGames()
     }
 
     private fun checkAllGames() {
-        val u = _ui.value
         val hasLO     = tracker.isUnlocked(Achievements.LO_FIRST_WIN.id)
         val hasPipe   = tracker.isUnlocked(Achievements.PIPE_FIRST_WIN.id)
         val hasSudoku = tracker.isUnlocked(Achievements.SK_FIRST_WIN.id)
@@ -173,7 +164,6 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { repo.saveAchievements(tracker.toJson()) }
     }
 
-    /** Dismiss the achievement toast. */
     fun dismissAchievement() { _ui.update { it.copy(newAchievement = null) } }
 
     override fun onCleared() {

@@ -1,7 +1,7 @@
 package com.enigma.littlegames.ui.home
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Home / hub screen — game cards, stats, nav to each game
+// Home Screen — Phase 3: adds Classic Sudoku and Kakuro game cards
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.core.*
@@ -27,10 +27,9 @@ import com.enigma.littlegames.common.MiniStat
 
 @Composable
 fun HomeScreen(hub: HubViewModel) {
-    val t      = LocalGameTheme.current
-    val ui     by hub.ui.collectAsStateWithLifecycle()
+    val t  = LocalGameTheme.current
+    val ui by hub.ui.collectAsStateWithLifecycle()
 
-    // Pulsing logo glow
     val inf = rememberInfiniteTransition(label = "logo_glow")
     val glowAlpha by inf.animateFloat(0.4f, 0.9f,
         infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
@@ -45,7 +44,6 @@ fun HomeScreen(hub: HubViewModel) {
         ) {
             Spacer(Modifier.height(32.dp))
 
-            // ── Logo ──────────────────────────────────────────────────────────
             Text("ENIGMA", fontSize = 36.sp, fontWeight = FontWeight.Black,
                 letterSpacing = 8.sp, color = t.primary.copy(alpha = glowAlpha))
             Text("GAME HUB", fontSize = 13.sp, letterSpacing = 6.sp,
@@ -53,43 +51,73 @@ fun HomeScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(28.dp))
 
-            // ── Cross-game stats ──────────────────────────────────────────────
+            // Cross-game stats
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 MiniStat("LO BEST",  ui.loBestMoves?.let { "$it mv" } ?: "—")
                 MiniStat("PIPE LVL", "${ui.pipeLevel}")
-                MiniStat("SUDOKU",   "${ui.sudokuWins} ✓")
+                MiniStat("PUZZLES",  "${ui.sudokuWins} ✓")
             }
 
             Spacer(Modifier.height(28.dp))
 
             // ── Game cards ────────────────────────────────────────────────────
             GameCard(
-                emoji = "💡", title = "LIGHTS OUT", subtitle = "Toggle all 25 lights off",
+                emoji       = "💡",
+                title       = "LIGHTS OUT",
+                subtitle    = "Toggle all 25 lights off",
                 description = "Tap a cell to flip it and its 4 neighbours. GF(2) matrix solver guarantees solvability. Four difficulties, hint system, and best-score tracking.",
                 accentColor = Color(0xFFFFD060),
-                stat = ui.loBestMoves?.let { "Best: $it moves" } ?: "Not played yet",
-                onClick = { hub.navigate(HubScreen.LightsOut) }
+                stat        = ui.loBestMoves?.let { "Best: $it moves" } ?: "Not played yet",
+                onClick     = { hub.navigate(HubScreen.LightsOut) }
             )
             Spacer(Modifier.height(14.dp))
+
             GameCard(
-                emoji = "🔧", title = "PIPE FLOW", subtitle = "Connect inlet to outlet",
-                description = "Rotate pipes to seal the circuit without leaks. 24-level campaign with rocks, locked pipes, par scoring, and auto-solve hint.",
+                emoji       = "🔧",
+                title       = "PIPE FLOW",
+                subtitle    = "Connect inlet to outlet",
+                description = "Rotate pipes to seal the circuit. 24-level campaign with rocks, locked pipes, 4-way X junctions, par scoring, and auto-solve hint.",
                 accentColor = t.primary,
-                stat = "Level ${ui.pipeLevel} / 24  ·  ⭐ ${ui.pipeStars}",
-                onClick = { hub.navigate(HubScreen.PipeFlow) }
+                stat        = "Level ${ui.pipeLevel} / 24  ·  ⭐ ${ui.pipeStars}",
+                onClick     = { hub.navigate(HubScreen.PipeFlow) }
             )
             Spacer(Modifier.height(14.dp))
+
             GameCard(
-                emoji = "🔢", title = "KILLER SUDOKU", subtitle = "Sums inside cages",
-                description = "Procedurally generated 9×9 Sudoku with cage constraints. Easy → Expert. Note mode, error highlighting, elapsed timer, and instant hint solver.",
+                emoji       = "🔢",
+                title       = "KILLER SUDOKU",
+                subtitle    = "Sums inside cages",
+                description = "Procedurally generated 9×9 with cage constraints. Minimum cage size 2. Easy → Expert. Note mode, error highlighting, and instant hint solver.",
                 accentColor = Color(0xFF4ECCA3),
-                stat = "${ui.sudokuWins} puzzles solved",
-                onClick = { hub.navigate(HubScreen.KillerSudoku) }
+                stat        = "${ui.sudokuWins} puzzles solved",
+                onClick     = { hub.navigate(HubScreen.KillerSudoku) }
+            )
+            Spacer(Modifier.height(14.dp))
+
+            GameCard(
+                emoji       = "9️⃣",
+                title       = "SUDOKU",
+                subtitle    = "Classic 9×9 logic puzzle",
+                description = "The timeless number placement puzzle. Four difficulty levels from Easy (42 givens) to Expert (20 givens). Note mode, hint, error detection.",
+                accentColor = Color(0xFF60A5FA),
+                stat        = "Classic mode · ${ui.sudokuWins} puzzles solved",
+                onClick     = { hub.navigate(HubScreen.Sudoku) }
+            )
+            Spacer(Modifier.height(14.dp))
+
+            GameCard(
+                emoji       = "➕",
+                title       = "KAKURO",
+                subtitle    = "Number crossword",
+                description = "Fill white cells with 1–9 so every run of cells sums to its clue. No digit repeats within a run. Four grid sizes from Easy 5×7 to Expert 11×11.",
+                accentColor = Color(0xFFA78BFA),
+                stat        = "Number crossword · ${ui.sudokuWins} puzzles solved",
+                onClick     = { hub.navigate(HubScreen.Kakuro) }
             )
 
             Spacer(Modifier.height(20.dp))
 
-            // ── Bottom nav row ────────────────────────────────────────────────
+            // Bottom nav
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(
                     onClick = { hub.navigate(HubScreen.AchievementsScreen) },
@@ -116,7 +144,6 @@ fun HomeScreen(hub: HubViewModel) {
             Spacer(Modifier.height(24.dp))
         }
 
-        // Achievement toast floats above everything
         val newAch by hub.ui.collectAsStateWithLifecycle()
         AchievementToast(
             achievement = newAch.newAchievement,

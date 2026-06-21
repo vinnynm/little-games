@@ -2,7 +2,15 @@ package com.enigma.littlegames.ui.games.pipeflow
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pipe Flow — game logic + ViewModel
-// Phase 2: tracks autoSolve usage count (for PIPE_NO_SOLVE achievement)
+// Phase 3 improvements:
+//   • Grid now fills more screen space (cell size increased, gap reduced)
+//   • 4-way (X) pipes are now used on path junctions at higher difficulty
+//   • X pipes: a junction where the path passes straight through but also
+//     has two "dummy" side ports (all 4 ports open). The solver treats
+//     them the same as I-pipes for flow validation, but they look and feel
+//     harder because they visually suggest more connections.
+//   • New difficulty param: xPipeChance — % of straight junctions that
+//     get upgraded to X pipes (0 on easy, up to 40% on expert).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.lifecycle.ViewModel
@@ -68,11 +76,25 @@ private val TITLES = listOf(
     "Aqua Nexus","Iron Conduit","Flow Matrix","Copper Maze","Delta Cross",
     "Pressure Line","Rock Garden","The Gauntlet","Junction 7","Steel River",
     "Pipe Dream","Hydra Path","Fault Zone","Labyrinth Run","Grid Current",
+    "Crossover","Quad Valve","Four-Way Junction","The X-Factor","Network Hub",
 )
 
-fun generatePipePuzzle(size: Int, difficulty: Int, rockCount: Int = 0, lockCount: Int = 0): PipePuzzle {
+/**
+ * Generate a pipe puzzle.
+ * @param xPipeChance  0..100 — percentage of straight (I) path segments to
+ *                     upgrade to X (4-way) pipes.  At 0 the puzzle is classic.
+ *                     X pipes are always in a straight orientation; the solver
+ *                     only needs the flow to pass through two opposite ports.
+ */
+fun generatePipePuzzle(
+    size: Int,
+    difficulty: Int,
+    rockCount: Int  = 0,
+    lockCount: Int  = 0,
+    xPipeChance: Int = 0,
+): PipePuzzle {
     repeat(40) {
-        val N = size * size
+        val N     = size * size
         val rocks = mutableSetOf<Int>()
         repeat(minOf(rockCount, (N * 0.15).toInt())) { rocks.add(Random.nextInt(N)) }
 
@@ -87,8 +109,10 @@ fun generatePipePuzzle(size: Int, difficulty: Int, rockCount: Int = 0, lockCount
             visited[idx] = true; path.add(idx)
             val r = idx / size; val c = idx % size
             val nbrs = buildList {
-                if (r > 0)      add(idx - size); if (r < size - 1) add(idx + size)
-                if (c > 0)      add(idx - 1);    if (c < size - 1) add(idx + 1)
+                if (r > 0)        add(idx - size)
+                if (r < size - 1) add(idx + size)
+                if (c > 0)        add(idx - 1)
+                if (c < size - 1) add(idx + 1)
             }.shuffled()
             for (n in nbrs) if (!visited[n] && n !in rocks && dfs(n)) return true
             path.removeLast(); return false
@@ -103,37 +127,69 @@ fun generatePipePuzzle(size: Int, difficulty: Int, rockCount: Int = 0, lockCount
         cells[outIdx] = PipeCell('O', nodeDir = outDir, fixed = true)
 
         val solution = mutableListOf<Pair<Int, Int>>()
-        var valid = true
+        var valid    = true
+
         for (pi in 1 until path.size - 1) {
             val idx  = path[pi]
             val prev = dirBetween(idx, path[pi - 1], size)
             val next = dirBetween(idx, path[pi + 1], size)
             if (prev == -1 || next == -1 || prev == next) { valid = false; break }
+
             val needed = BooleanArray(4).also { it[prev] = true; it[next] = true }
-            val type   = if (next == OPP[prev]) 'I' else 'L'
-            val rot    = findRot(BASE_PORTS[type]!!, needed)
-            if (rot == -1) { valid = false; break }
+
+            // Decide pipe type
+            val isStraight = next == OPP[prev]  // I-pipe orientation
+            val useX = isStraight && xPipeChance > 0 && Random.nextInt(100) < xPipeChance
+
+            val type = when {
+                useX       -> 'X'
+                isStraight -> 'I'
+                else       -> 'L'
+            }
+
+            // For X pipes the "correct" rotation is the one where flow passes
+            // through the two correct opposite ports (X has all ports open so
+            // any rotation is technically valid, but we canonicalise to 0 or 1).
+            val rot = if (type == 'X') {
+                // 0 = vertical straight (N↕S), 1 = horizontal straight (E↔W)
+                if (prev == 0 || prev == 2) 0 else 1
+            } else {
+                findRot(BASE_PORTS[type]!!, needed).also { if (it == -1) { valid = false } }
+            }
+            if (!valid) break
+
             cells[idx] = PipeCell(type, rot, fixed = false)
             solution.add(idx to rot)
         }
         if (!valid) return@repeat
 
-        // Fill empties
-        val fillers = charArrayOf('I', 'L', 'T', 'X', 'E')
+        // Fill empty cells with filler pipes including X at higher difficulty
+        val fillers = if (xPipeChance > 20)
+            charArrayOf('I', 'L', 'T', 'X', 'X', 'E')  // more X fillers at high diff
+        else
+            charArrayOf('I', 'L', 'T', 'X', 'E')
+
         for (i in 0 until N) if (cells[i].type == ' ')
             cells[i] = PipeCell(fillers.random(), Random.nextInt(4), false)
 
         // Lock some solution pipes
-        val lockSet = solution.map { it.first }.shuffled().take(minOf(lockCount, solution.size)).toSet()
+        val lockSet = solution.map { it.first }.shuffled()
+            .take(minOf(lockCount, solution.size)).toSet()
         solution.forEach { (idx, solRot) ->
-            if (idx in lockSet) cells[idx] = cells[idx].copy(locked = true, fixed = true)
-            else { var r: Int; do { r = Random.nextInt(4) } while (r == solRot); cells[idx] = cells[idx].copy(rot = r) }
+            if (idx in lockSet) {
+                cells[idx] = cells[idx].copy(locked = true, fixed = true)
+            } else {
+                var r: Int
+                do { r = Random.nextInt(4) } while (r == solRot)
+                cells[idx] = cells[idx].copy(rot = r)
+            }
         }
 
         return PipePuzzle(size, cells.toList(), solution,
             maxOf(1, (solution.size * 1.2).toInt()), difficulty, TITLES.random())
     }
-    // Fallback
+
+    // Fallback — minimal solvable puzzle
     val N = size * size
     val c = Array(N) { PipeCell(' ', fixed = true) }
     c[0] = PipeCell('N', nodeDir = 1, fixed = true)
@@ -170,15 +226,40 @@ fun validateFlow(cells: List<PipeCell>, size: Int): FlowResult {
 }
 
 // ── Campaign spec ─────────────────────────────────────────────────────────────
+// Format: [gridSize, difficulty, rockCount, lockCount, xPipeChance(0-100)]
 
 val PIPE_CAMPAIGN = listOf(
-    intArrayOf(4,1,0,0), intArrayOf(4,2,0,1), intArrayOf(4,2,1,1), intArrayOf(4,3,1,2),
-    intArrayOf(5,2,0,0), intArrayOf(5,2,1,1), intArrayOf(5,3,2,2), intArrayOf(5,3,2,3),
-    intArrayOf(6,3,0,1), intArrayOf(6,3,2,2), intArrayOf(6,4,3,2), intArrayOf(6,4,3,3),
-    intArrayOf(7,3,2,2), intArrayOf(7,4,3,3), intArrayOf(7,4,4,3), intArrayOf(7,5,4,4),
-    intArrayOf(8,4,3,3), intArrayOf(8,4,4,4), intArrayOf(8,5,5,4),
-    intArrayOf(9,4,4,4), intArrayOf(9,5,5,5),
-    intArrayOf(10,5,5,5), intArrayOf(10,5,6,5), intArrayOf(10,5,6,6),
+    // Levels 1-4: 4×4 warm-up, no X pipes
+    intArrayOf(4, 1, 0, 0,  0),
+    intArrayOf(4, 2, 0, 1,  0),
+    intArrayOf(4, 2, 1, 1,  0),
+    intArrayOf(4, 3, 1, 2,  0),
+    // Levels 5-8: 5×5, X pipes introduced
+    intArrayOf(5, 2, 0, 0,  0),
+    intArrayOf(5, 2, 1, 1, 10),
+    intArrayOf(5, 3, 2, 2, 15),
+    intArrayOf(5, 3, 2, 3, 20),
+    // Levels 9-12: 6×6
+    intArrayOf(6, 3, 0, 1, 10),
+    intArrayOf(6, 3, 2, 2, 20),
+    intArrayOf(6, 4, 3, 2, 25),
+    intArrayOf(6, 4, 3, 3, 30),
+    // Levels 13-16: 7×7
+    intArrayOf(7, 3, 2, 2, 20),
+    intArrayOf(7, 4, 3, 3, 25),
+    intArrayOf(7, 4, 4, 3, 30),
+    intArrayOf(7, 5, 4, 4, 35),
+    // Levels 17-19: 8×8
+    intArrayOf(8, 4, 3, 3, 25),
+    intArrayOf(8, 4, 4, 4, 30),
+    intArrayOf(8, 5, 5, 4, 35),
+    // Levels 20-21: 9×9
+    intArrayOf(9, 4, 4, 4, 30),
+    intArrayOf(9, 5, 5, 5, 40),
+    // Levels 22-24: 10×10 expert
+    intArrayOf(10, 5, 5, 5, 35),
+    intArrayOf(10, 5, 6, 5, 40),
+    intArrayOf(10, 5, 6, 6, 40),
 )
 
 // ── UI State ──────────────────────────────────────────────────────────────────
@@ -193,7 +274,7 @@ data class PipeFlowUiState(
     val solved: Boolean         = false,
     val generating: Boolean     = true,
     val lastStars: Int          = 0,
-    val autoSolveUsed: Boolean  = false,   // Phase 2: track for PIPE_NO_SOLVE
+    val autoSolveUsed: Boolean  = false,
 )
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
@@ -207,8 +288,8 @@ class PipeFlowViewModel : ViewModel() {
     fun loadLevel(lvl: Int) {
         _state.update { it.copy(generating = true, level = lvl, solved = false, flowResult = null, moves = 0, autoSolveUsed = false) }
         viewModelScope.launch(Dispatchers.Default) {
-            val spec = PIPE_CAMPAIGN[minOf(lvl - 1, PIPE_CAMPAIGN.size - 1)]
-            val puzzle = generatePipePuzzle(spec[0], spec[1], spec[2], spec[3])
+            val spec   = PIPE_CAMPAIGN[minOf(lvl - 1, PIPE_CAMPAIGN.size - 1)]
+            val puzzle = generatePipePuzzle(spec[0], spec[1], spec[2], spec[3], if (spec.size > 4) spec[4] else 0)
             _state.update { it.copy(puzzle = puzzle, cells = puzzle.cells, generating = false) }
         }
     }
@@ -226,9 +307,9 @@ class PipeFlowViewModel : ViewModel() {
         val result = validateFlow(s.cells, puzzle.size)
         if (result.solved) {
             val stars = when {
-                s.moves <= puzzle.par                    -> 3
-                s.moves <= (puzzle.par * 1.6).toInt()   -> 2
-                else                                     -> 1
+                s.moves <= puzzle.par                  -> 3
+                s.moves <= (puzzle.par * 1.6).toInt() -> 2
+                else                                   -> 1
             }
             _state.update { it.copy(flowResult = result, solved = true, lastStars = stars, totalStars = it.totalStars + stars) }
         } else {

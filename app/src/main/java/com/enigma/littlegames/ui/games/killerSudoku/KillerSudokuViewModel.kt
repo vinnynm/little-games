@@ -2,7 +2,11 @@ package com.enigma.littlegames.ui.games.killerSudoku
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Killer Sudoku — ViewModel
-// Phase 2: error count, elapsed timer, reports to HubViewModel
+// Phase 3 fixes:
+//   • Minimum cage size is 2 (no single-cell cages)
+//   • Cage outlines drawn at a higher z-order than highlight so they're
+//     always visible — the outline data is now part of KSState so the
+//     Screen can draw them on top of the cell backgrounds.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.lifecycle.ViewModel
@@ -16,16 +20,23 @@ import kotlin.random.Random
 data class SKCell(val value: Int = 0, val isGiven: Boolean = false, val notes: Set<Int> = emptySet())
 data class SKCage(val id: Int, val sum: Int, val cells: List<Pair<Int, Int>>, val colorIdx: Int)
 
+// Pre-computed per-edge cage-border flags so the screen can draw borders
+// on top of everything else (fixing the "hidden by highlight" bug).
+// Each entry maps (row, col) → set of sides that have a cage border.
+enum class CageSide { TOP, RIGHT, BOTTOM, LEFT }
+typealias CageBorders = Map<Pair<Int, Int>, Set<CageSide>>
+
 enum class SKDifficulty(val minCage: Int, val maxCage: Int, val reveal: Int, val label: String, val emoji: String) {
-    EASY  (1, 3, 40, "Easy",   "🌿"),
+    EASY  (2, 3, 40, "Easy",   "🌿"),   // minCage raised to 2
     MEDIUM(2, 5, 32, "Medium", "⚡"),
     HARD  (2, 6, 26, "Hard",   "🔥"),
-    EXPERT(3, 7, 20, "Expert", "💀"),
+    EXPERT(2, 7, 20, "Expert", "💀"),
 }
 
 data class KSState(
     val board: Array<Array<SKCell>>  = Array(9) { Array(9) { SKCell() } },
     val cages: List<SKCage>          = emptyList(),
+    val cageBorders: CageBorders     = emptyMap(),   // NEW: pre-computed border flags
     val solution: Array<IntArray>    = Array(9) { IntArray(9) },
     val selected: Pair<Int,Int>?     = null,
     val noteMode: Boolean            = false,
@@ -48,6 +59,7 @@ fun generateSolution(): Array<IntArray> {
         for (dr in 0..2) for (dc in 0..2) if (g[sr+dr][sc+dc] == n) return false
         return true
     }
+    // Seed diagonal boxes for speed
     for (box in 0..2) {
         val nums = (1..9).shuffled(); var i = 0
         for (r in box*3 until box*3+3) for (c in box*3 until box*3+3) g[r][c] = nums[i++]
@@ -65,30 +77,106 @@ fun generateSolution(): Array<IntArray> {
     fill(); return g
 }
 
+/**
+ * Build cages with a guaranteed minimum size of 2.
+ * Strategy: build normally, then merge any remaining single-cell cage
+ * with an orthogonal neighbour that is in a different cage.
+ */
 fun buildCages(sol: Array<IntArray>, d: SKDifficulty): List<SKCage> {
-    val assigned = Array(9) { BooleanArray(9) }
-    val result = mutableListOf<SKCage>()
+    val assigned = Array(9) { IntArray(9) { -1 } }  // -1 = unassigned
+    val result   = mutableListOf<SKCage>()
+
     val order = (0..80).map { it / 9 to it % 9 }.shuffled()
+
     for ((sr, sc) in order) {
-        if (assigned[sr][sc]) continue
-        val target = d.minCage + Random.nextInt(d.maxCage - d.minCage + 1)
-        val cage = mutableListOf(sr to sc); assigned[sr][sc] = true
+        if (assigned[sr][sc] != -1) continue
+
+        // Target cage size: at least 2
+        val target = maxOf(2, d.minCage + Random.nextInt(d.maxCage - d.minCage + 1))
+        val cage   = mutableListOf(sr to sc)
+        assigned[sr][sc] = result.size
+
         repeat(target - 1) {
-            val used = cage.map { (r,c) -> sol[r][c] }.toSet()
-            val cands = cage.flatMap { (r,c) ->
+            val used  = cage.map { (r, c) -> sol[r][c] }.toSet()
+            val cands = cage.flatMap { (r, c) ->
                 listOf(r-1 to c, r+1 to c, r to c-1, r to c+1)
-                    .filter { (nr,nc) -> nr in 0..8 && nc in 0..8 && !assigned[nr][nc] && sol[nr][nc] !in used }
+                    .filter { (nr, nc) ->
+                        nr in 0..8 && nc in 0..8
+                        && assigned[nr][nc] == -1
+                        && sol[nr][nc] !in used
+                    }
             }.distinct().shuffled()
-            cands.firstOrNull()?.also { cage.add(it); assigned[it.first][it.second] = true }
+            cands.firstOrNull()?.also { (nr, nc) ->
+                cage.add(nr to nc)
+                assigned[nr][nc] = result.size
+            }
         }
-        result.add(SKCage(result.size, cage.sumOf { (r,c) -> sol[r][c] }, cage, result.size % 18))
+
+        result.add(SKCage(result.size, cage.sumOf { (r, c) -> sol[r][c] }, cage, result.size % 18))
     }
-    return result
+
+    // ── Merge any lone single-cell cage that slipped through ─────────────────
+    // (Can happen when a cell gets surrounded before we reach it in shuffled order)
+    val merged   = result.map { it.cells.toMutableList() }.toMutableList()
+    val cageSums = result.map { it.sum }.toMutableList()
+
+    for (r in 0..8) for (c in 0..8) {
+        val id = assigned[r][c]
+        if (merged[id].size == 1) {
+            // Find a neighbour cage to absorb into
+            val nbCageId = listOf(r-1 to c, r+1 to c, r to c-1, r to c+1)
+                .filter { (nr, nc) -> nr in 0..8 && nc in 0..8 }
+                .map { (nr, nc) -> assigned[nr][nc] }
+                .filter { it != id }
+                .firstOrNull()
+            if (nbCageId != null) {
+                merged[nbCageId].add(r to c)
+                cageSums[nbCageId] += sol[r][c]
+                // Remove the lone cage by clearing it (we rebuild below)
+                merged[id].clear()
+            }
+        }
+    }
+
+    // Rebuild final cage list, skipping empties
+    val final = mutableListOf<SKCage>()
+    merged.forEachIndexed { idx, cells ->
+        if (cells.isNotEmpty()) {
+            final.add(SKCage(final.size, cageSums[idx], cells.toList(), final.size % 18))
+        }
+    }
+    return final
+}
+
+/** Pre-compute which edges of each cell should have a thick cage border. */
+fun computeCageBorders(cages: List<SKCage>): CageBorders {
+    // Map each cell → its cage id
+    val cellCage = HashMap<Pair<Int,Int>, Int>()
+    cages.forEach { cage -> cage.cells.forEach { cellCage[it] = cage.id } }
+
+    val borders = HashMap<Pair<Int,Int>, MutableSet<CageSide>>()
+    fun cell(r: Int, c: Int) = borders.getOrPut(r to c) { mutableSetOf() }
+
+    for (r in 0..8) for (c in 0..8) {
+        val id = cellCage[r to c] ?: continue
+        // TOP edge
+        if (r == 0 || cellCage[r-1 to c] != id) cell(r, c).add(CageSide.TOP)
+        // BOTTOM edge
+        if (r == 8 || cellCage[r+1 to c] != id) cell(r, c).add(CageSide.BOTTOM)
+        // LEFT edge
+        if (c == 0 || cellCage[r to c-1] != id) cell(r, c).add(CageSide.LEFT)
+        // RIGHT edge
+        if (c == 8 || cellCage[r to c+1] != id) cell(r, c).add(CageSide.RIGHT)
+    }
+    return borders
 }
 
 fun makeBoard(sol: Array<IntArray>, reveal: Int): Array<Array<SKCell>> {
     val b = Array(9) { Array(9) { SKCell() } }
-    (0..80).shuffled().take(reveal).forEach { i -> val r = i/9; val c = i%9; b[r][c] = SKCell(sol[r][c], isGiven = true) }
+    (0..80).shuffled().take(reveal).forEach { i ->
+        val r = i / 9; val c = i % 9
+        b[r][c] = SKCell(sol[r][c], isGiven = true)
+    }
     return b
 }
 
@@ -104,10 +192,10 @@ fun computeErrors(board: Array<Array<SKCell>>, cages: List<SKCage>): Set<Pair<In
     for (r in 0..8) for (c in 0..8)
         if (board[r][c].value != 0 && (!rowOk(r) || !colOk(c) || !boxOk(r, c))) err.add(r to c)
     for (cage in cages) {
-        val vals = cage.cells.map { (r,c) -> board[r][c].value }
+        val vals = cage.cells.map { (r, c) -> board[r][c].value }
         val filled = vals.filter { it != 0 }
         if (filled.size != filled.toSet().size || (vals.all { it != 0 } && vals.sum() != cage.sum))
-            cage.cells.filter { (r,c) -> board[r][c].value != 0 }.forEach { err.add(it) }
+            cage.cells.filter { (r, c) -> board[r][c].value != 0 }.forEach { err.add(it) }
     }
     return err
 }
@@ -125,10 +213,11 @@ class KillerSudokuViewModel : ViewModel() {
         timerJob?.cancel()
         _state.update { it.copy(generating = true, difficulty = d, elapsedSecs = 0L, errorCount = 0, isComplete = false, selected = null) }
         viewModelScope.launch(Dispatchers.Default) {
-            val sol   = generateSolution()
-            val cages = buildCages(sol, d)
-            val board = makeBoard(sol, d.reveal)
-            _state.update { it.copy(generating = false, solution = sol, cages = cages, board = board) }
+            val sol     = generateSolution()
+            val cages   = buildCages(sol, d)
+            val borders = computeCageBorders(cages)
+            val board   = makeBoard(sol, d.reveal)
+            _state.update { it.copy(generating = false, solution = sol, cages = cages, cageBorders = borders, board = board) }
         }
         timerJob = viewModelScope.launch {
             while (true) {

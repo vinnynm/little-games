@@ -1,12 +1,9 @@
-package com.enigma.littlegames.ui.games.killerSudoku
+package com.enigma.littlegames.ui.games.sudoku
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Killer Sudoku Screen — Phase 3 UI polish:
-//   • Cage outlines drawn in a second pass AFTER cell backgrounds, so they
-//     are always visible even when the cell is highlighted or selected.
-//   • Dashed cage border style (dashPathEffect) for the classic KS look.
-//   • Larger number pad buttons.
-//   • Cleaner stat row layout.
+// Classic Sudoku Screen
+// Clean 9×9 grid with subtle 3×3 box shading, note mode, error highlighting,
+// and particles on completion — consistent with the hub theme system.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.*
@@ -22,54 +19,36 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.enigma.littlegames.domain.rememberParticleSystem
 import com.enigma.littlegames.domain.Sfx
-import com.enigma.littlegames.common.GameTheme
-import com.enigma.littlegames.common.GameTopBar
-import com.enigma.littlegames.common.HubScreen
-import com.enigma.littlegames.common.HubViewModel
-import com.enigma.littlegames.common.LocalGameTheme
-import com.enigma.littlegames.common.MiniStat
-import com.enigma.littlegames.common.ParticleOverlay
-import com.enigma.littlegames.common.ThemedButton
-
-// 18 subtle cage background colours — slightly brighter than Phase 2
-// so cage regions remain perceptible even under the highlight tint
-val CAGE_COLORS = listOf(
-    Color(0xFF1A3828), Color(0xFF162A3A), Color(0xFF2A2618), Color(0xFF261828),
-    Color(0xFF18262A), Color(0xFF262A18), Color(0xFF2A1818), Color(0xFF182A26),
-    Color(0xFF261818), Color(0xFF18182A), Color(0xFF2A2A18), Color(0xFF182A18),
-    Color(0xFF2A182A), Color(0xFF1E1E1E), Color(0xFF262626), Color(0xFF1A261A),
-    Color(0xFF2A1E26), Color(0xFF1E2A26),
-)
+import com.enigma.littlegames.domain.rememberParticleSystem
+import com.enigma.littlegames.common.*
 
 @Composable
-fun KillerSudokuScreen(hub: HubViewModel) {
-    val t      = LocalGameTheme.current
-    val vm: KillerSudokuViewModel = viewModel()
-    val state  by vm.state.collectAsStateWithLifecycle()
+fun SudokuScreen(hub: HubViewModel) {
+    val t         = LocalGameTheme.current
+    val vm: SudokuViewModel = viewModel()
+    val state     by vm.state.collectAsStateWithLifecycle()
     val particles = rememberParticleSystem()
     var gridCenter by remember { mutableStateOf(Offset(400f, 500f)) }
 
     LaunchedEffect(state.isComplete) {
         if (state.isComplete) {
             hub.recordSudokuWin(
-                difficulty  = state.difficulty.label,
+                difficulty  = "Classic ${state.difficulty.label}",
                 errorCount  = state.errorCount,
                 elapsedSecs = state.elapsedSecs,
             )
             hub.sound.play(Sfx.VICTORY)
             particles.burst(
                 center = gridCenter,
-                colors = listOf(Color(0xFF4ECCA3), Color(0xFFFFB830), t.primary, Color.White),
-                count  = 65, speed = 0.4f,
+                colors = listOf(t.primary, t.secondary, Color.White, t.accent),
+                count  = 60, speed = 0.4f,
             )
         }
     }
@@ -88,7 +67,7 @@ fun KillerSudokuScreen(hub: HubViewModel) {
             }
 
             GameTopBar(
-                title    = "KILLER SUDOKU",
+                title    = "SUDOKU",
                 subtitle = "${state.difficulty.emoji} ${state.difficulty.label}",
                 onBack   = { hub.navigate(HubScreen.Home) },
                 actions  = {
@@ -97,29 +76,22 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 }
             )
 
-            // Stats
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                 MiniStat("ERRORS",  "${state.errorCount}")
                 MiniStat("FILLED",  "${state.board.sumOf { r -> r.count { it.value != 0 } }}/81")
                 MiniStat("NOTES",   if (state.noteMode) "ON" else "OFF")
             }
 
-            // Completion banner
             AnimatedVisibility(state.isComplete) {
                 Surface(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    color = t.success.copy(.15f), shape = RoundedCornerShape(10.dp),
+                    color  = t.success.copy(.15f), shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, t.success.copy(.5f))
                 ) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center) {
-                        Text("🎉  PUZZLE COMPLETE!", color = t.success,
-                            fontWeight = FontWeight.Black, fontSize = 15.sp)
-                        Text("  ·  ${state.errorCount} errors  ·  $timer",
-                            color = t.textSecondary, fontSize = 11.sp)
+                        Text("🎉  SOLVED!", color = t.success, fontWeight = FontWeight.Black, fontSize = 15.sp)
+                        Text("  ·  ${state.errorCount} errors  ·  $timer", color = t.textSecondary, fontSize = 11.sp)
                     }
                 }
             }
@@ -129,30 +101,19 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = t.primary)
                 }
-            } else if (state.cages.isNotEmpty()) {
-                val cageById   = remember(state.cages) { state.cages.associateBy { it.id } }
-                val cellToCage = remember(state.cages) {
-                    buildMap<Pair<Int,Int>, Int> {
-                        state.cages.forEach { cage -> cage.cells.forEach { put(it, cage.id) } }
-                    }
-                }
-
+            } else {
                 BoxWithConstraints(
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
+                    Modifier.fillMaxWidth().aspectRatio(1f)
                         .border(2.dp, t.primary.copy(.7f), RoundedCornerShape(4.dp))
                         .onGloballyPositioned { c ->
                             gridCenter = Offset(c.size.width / 2f, c.size.height / 2f)
                         }
                 ) {
-                    // ── PASS 1: draw cell backgrounds ─────────────────────────
                     Column(Modifier.fillMaxSize()) {
                         for (row in 0..8) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
                                 for (col in 0..8) {
                                     val cell      = state.board[row][col]
-                                    val cage      = cageById[cellToCage[row to col]]
                                     val isSel     = state.selected == row to col
                                     val isHi      = state.selected?.let { (sr, sc) ->
                                         sr == row || sc == col || (sr/3 == row/3 && sc/3 == col/3)
@@ -161,51 +122,48 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                                         state.board[sr][sc].value != 0 && state.board[sr][sc].value == cell.value
                                     } ?: false
                                     val isErr     = (row to col) in state.errors
-                                    val showSum   = cage != null &&
-                                        cage.cells.minWithOrNull(compareBy({ it.first }, { it.second })) == row to col
+                                    val boxShade  = ((row / 3) + (col / 3)) % 2 == 0
 
-                                    SKCellView(
-                                        row, col, cell, cage, isSel, isHi, isSameVal, isErr,
-                                        showSum, state.difficulty, t,
+                                    ClassicSudokuCell(
+                                        row, col, cell, boxShade, isSel, isHi, isSameVal, isErr, t,
                                         Modifier.weight(1f).fillMaxHeight()
-                                    ) {
-                                        hub.sound.play(Sfx.TAP)
-                                        vm.select(row, col)
-                                    }
+                                    ) { hub.sound.play(Sfx.TAP); vm.select(row, col) }
                                 }
                             }
                         }
                     }
 
-                    // ── PASS 2: cage outlines drawn on top of everything ──────
-                    // Using Canvas overlay so borders are never obscured by
-                    // the animated cell backgrounds.
-                    val cellPx = with(LocalDensity.current) {
-                        (maxWidth / 9).toPx()
-                    }
+                    // Box dividers on top
+                    val cellPx = with(LocalDensity.current) { (maxWidth / 9).toPx() }
                     Canvas(Modifier.fillMaxSize()) {
-                        drawCageOutlines(state.cageBorders, cellPx, t.primary)
-                        drawBoxDividers(size, t.primary)
+                        drawSudokuBoxLines(size, t.primary)
                     }
                 }
             }
 
             Spacer(Modifier.height(8.dp))
 
-            // Controls row
+            // Controls
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    Modifier.clip(RoundedCornerShape(8.dp))
-                        .background(if (state.noteMode) t.primary.copy(.2f) else t.surface)
-                        .border(1.dp, if (state.noteMode) t.primary else t.border, RoundedCornerShape(8.dp))
-                        .clickable { hub.sound.play(Sfx.TAP); vm.toggleNotes() }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    Text("✏️  Notes", color = if (state.noteMode) t.primary else t.textSecondary, fontSize = 13.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        Modifier.clip(RoundedCornerShape(8.dp))
+                            .background(if (state.noteMode) t.primary.copy(.2f) else t.surface)
+                            .border(1.dp, if (state.noteMode) t.primary else t.border, RoundedCornerShape(8.dp))
+                            .clickable { hub.sound.play(Sfx.TAP); vm.toggleNotes() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) { Text("✏️ Notes", color = if (state.noteMode) t.primary else t.textSecondary, fontSize = 13.sp) }
+
+                    Box(
+                        Modifier.clip(RoundedCornerShape(8.dp)).background(t.surface)
+                            .border(1.dp, t.border, RoundedCornerShape(8.dp))
+                            .clickable { hub.sound.play(Sfx.TAP); vm.hint() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) { Text("💡 Hint", color = t.textSecondary, fontSize = 13.sp) }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
@@ -220,7 +178,7 @@ fun KillerSudokuScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Number pad — slightly larger buttons
+            // Number pad
             val counts = IntArray(10).also { arr ->
                 state.board.forEach { row -> row.forEach { if (it.value != 0) arr[it.value]++ } }
             }
@@ -228,7 +186,7 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 for (n in 1..9) {
                     val rem    = 9 - counts[n]
                     val active = state.selected?.let { (r, c) -> state.board[r][c].value == n } ?: false
-                    SKNumBtn(n, rem, active, t) {
+                    SudokuNumBtn(n, rem, active, t) {
                         hub.sound.play(if (rem > 0) Sfx.SUDOKU_PLACE else Sfx.SUDOKU_ERROR)
                         vm.place(n)
                     }
@@ -242,7 +200,7 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(t.surface).padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                SKDifficulty.entries.forEach { d ->
+                SudokuDifficulty.entries.forEach { d ->
                     val sel = state.difficulty == d
                     Box(
                         Modifier.weight(1f).clip(RoundedCornerShape(7.dp))
@@ -251,12 +209,10 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                             .padding(vertical = 7.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            "${d.emoji} ${d.label.take(3)}",
-                            color = if (sel) t.background else t.textSecondary,
-                            fontSize = 10.sp,
-                            fontWeight = if (sel) FontWeight.Black else FontWeight.Normal
-                        )
+                        Text("${d.emoji} ${d.label.take(3)}",
+                            color     = if (sel) t.background else t.textSecondary,
+                            fontSize  = 10.sp,
+                            fontWeight = if (sel) FontWeight.Black else FontWeight.Normal)
                     }
                 }
             }
@@ -267,77 +223,27 @@ fun KillerSudokuScreen(hub: HubViewModel) {
     }
 }
 
-// ── Cage outline drawing ──────────────────────────────────────────────────────
-
-/**
- * Draw dashed cage borders in a single Canvas pass on top of all cell
- * backgrounds.  Each border segment is 2 dp wide and uses a dash pattern
- * so the classic Killer Sudoku look is preserved.
- */
-private fun DrawScope.drawCageOutlines(borders: CageBorders, cellPx: Float, primary: Color) {
-    val paint  = Color.White.copy(alpha = 0.80f)   // bright white so it reads on every bg
-    val stroke = Stroke(width = 2.5f)
-    val inset  = cellPx * 0.04f   // tiny inset so borders don't overlap the grid lines
-
-    borders.forEach { (cell, sides) ->
-        val (row, col) = cell
-        val left   = col * cellPx + inset
-        val top    = row * cellPx + inset
-        val right  = left  + cellPx - inset * 2
-        val bottom = top   + cellPx - inset * 2
-
-        if (CageSide.TOP    in sides) drawLine(paint, Offset(left, top),    Offset(right, top),    stroke.width)
-        if (CageSide.BOTTOM in sides) drawLine(paint, Offset(left, bottom), Offset(right, bottom), stroke.width)
-        if (CageSide.LEFT   in sides) drawLine(paint, Offset(left, top),    Offset(left, bottom),  stroke.width)
-        if (CageSide.RIGHT  in sides) drawLine(paint, Offset(right, top),   Offset(right, bottom), stroke.width)
-    }
-}
-
-/** Redraw the 3×3 box dividers on top so they're always crisp. */
-private fun DrawScope.drawBoxDividers(canvasSize: Size, primary: Color) {
-    val cellPx = canvasSize.width / 9f
-    val thick  = Stroke(width = 2.5f)
-    val color  = Color.White.copy(alpha = 0.55f)
-    // Vertical box lines
-    for (i in listOf(3, 6)) {
-        val x = i * cellPx
-        drawLine(color, Offset(x, 0f), Offset(x, canvasSize.height), thick.width)
-    }
-    // Horizontal box lines
-    for (i in listOf(3, 6)) {
-        val y = i * cellPx
-        drawLine(color, Offset(0f, y), Offset(canvasSize.width, y), thick.width)
-    }
-}
-
 // ── Cell ──────────────────────────────────────────────────────────────────────
 
 @Composable
-fun SKCellView(
-    row: Int, col: Int, cell: SKCell, cage: SKCage?,
+private fun ClassicSudokuCell(
+    row: Int, col: Int, cell: SudokuCell,
+    boxShade: Boolean,
     isSelected: Boolean, isHighlighted: Boolean, isSameValue: Boolean,
-    isError: Boolean, showCageSum: Boolean, d: SKDifficulty, t: GameTheme,
+    isError: Boolean, t: GameTheme,
     modifier: Modifier, onClick: () -> Unit,
 ) {
-    val accent = when (d) {
-        SKDifficulty.EASY   -> Color(0xFF4ECCA3)
-        SKDifficulty.MEDIUM -> Color(0xFFFFB830)
-        SKDifficulty.HARD   -> Color(0xFFE94560)
-        SKDifficulty.EXPERT -> Color(0xFFB44FE8)
-    }
-    val cageBg = cage?.let { CAGE_COLORS[it.colorIdx % CAGE_COLORS.size] } ?: Color(0xFF0D1020)
+    val baseBg  = if (boxShade) t.surface else t.surfaceVariant
     val bg by animateColorAsState(
         when {
-            isSelected    -> accent.copy(.35f)
+            isSelected    -> t.primary.copy(.35f)
             isError       -> Color(0xFFE94560).copy(.22f)
-            isSameValue   -> accent.copy(.12f)
-            isHighlighted -> Color(0xFF0F3460)
-            else          -> cageBg
-        }, tween(120), label = "sk_bg"
+            isSameValue   -> t.primary.copy(.12f)
+            isHighlighted -> t.primary.copy(.08f)
+            else          -> baseBg
+        }, tween(100), label = "s_bg"
     )
 
-    // Thin grid lines drawn via drawBehind — cage borders are drawn in the
-    // parent Canvas overlay so they are always on top.
     Box(
         modifier
             .background(bg)
@@ -358,25 +264,15 @@ fun SKCellView(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        // Cage sum label in top-left corner of the first cell
-        if (showCageSum && cage != null) {
-            Box(
-                Modifier.align(Alignment.TopStart)
-                    .background(accent.copy(.18f), RoundedCornerShape(bottomEnd = 3.dp))
-                    .padding(horizontal = 2.dp, vertical = 1.dp)
-            ) {
-                Text("${cage.sum}", color = accent.copy(.95f), fontSize = 7.sp, fontWeight = FontWeight.ExtraBold)
-            }
-        }
         when {
             cell.value != 0 -> Text(
                 "${cell.value}",
                 color = when {
                     isError      -> Color(0xFFE94560)
-                    cell.isGiven -> accent
-                    else         -> Color(0xFFCCD6F6)
+                    cell.isGiven -> t.primary
+                    else         -> t.textPrimary
                 },
-                fontSize = 17.sp,
+                fontSize   = 18.sp,
                 fontWeight = if (cell.isGiven) FontWeight.Black else FontWeight.Medium
             )
             cell.notes.isNotEmpty() -> Column(
@@ -391,7 +287,7 @@ fun SKCellView(
                     for (nc in 0..2) {
                         val n = nr * 3 + nc + 1
                         if (n in cell.notes)
-                            Text("$n", color = accent.copy(.85f), fontSize = 7.sp, fontWeight = FontWeight.Bold)
+                            Text("$n", color = t.primary.copy(.85f), fontSize = 7.sp, fontWeight = FontWeight.Bold)
                         else
                             Spacer(Modifier.weight(1f))
                     }
@@ -401,14 +297,25 @@ fun SKCellView(
     }
 }
 
+private fun DrawScope.drawSudokuBoxLines(canvasSize: Size, primary: Color) {
+    val cellPx = canvasSize.width / 9f
+    val color  = Color.White.copy(alpha = 0.55f)
+    for (i in listOf(3, 6)) {
+        val x = i * cellPx
+        drawLine(color, Offset(x, 0f), Offset(x, canvasSize.height), 2.5f)
+        val y = i * cellPx
+        drawLine(color, Offset(0f, y), Offset(canvasSize.width, y), 2.5f)
+    }
+}
+
 // ── Number button ─────────────────────────────────────────────────────────────
 
 @Composable
-fun SKNumBtn(n: Int, remaining: Int, isActive: Boolean, t: GameTheme, onClick: () -> Unit) {
-    val bg  by animateColorAsState(if (isActive) t.primary else t.surfaceVariant, tween(150), label = "nb_bg")
+fun SudokuNumBtn(n: Int, remaining: Int, isActive: Boolean, t: GameTheme, onClick: () -> Unit) {
+    val bg  by animateColorAsState(if (isActive) t.primary else t.surfaceVariant, tween(150), label = "sn_bg")
     val txt by animateColorAsState(
         if (isActive) t.background else if (remaining == 0) t.textSecondary else t.textPrimary,
-        tween(150), label = "nb_txt"
+        tween(150), label = "sn_txt"
     )
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(36.dp)) {
         Box(
