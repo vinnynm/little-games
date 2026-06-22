@@ -1,13 +1,27 @@
 package com.enigma.littlegames.ui.games.kakuro
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kakuro Screen
-// Black clue cells split diagonally (Canvas Path) showing down clue in the
-// top-right triangle and right/across clue in the bottom-left triangle.
-// White cells work like Sudoku number entry with error highlighting.
+// Kakuro Screen — clue-cell rendering fix:
+//
+//   Kakuro convention (universally used in published puzzles):
+//     • The clue cell is always the BLACK cell immediately to the LEFT of a
+//       horizontal run, or immediately ABOVE a vertical run.
+//     • The diagonal divides the black cell top-left → bottom-right.
+//     • The DOWN clue sits in the TOP-RIGHT triangle  → it applies to the
+//       run that starts on the row BELOW this cell (going downward).
+//     • The RIGHT (across) clue sits in the BOTTOM-LEFT triangle → it applies
+//       to the run that starts in the column to the RIGHT of this cell.
+//
+//   Previous bug: both triangles were drawn but text was mis-positioned so
+//   the down clue appeared where the across clue should be, and vice-versa.
+//   The fix below positions text precisely within each triangle half.
+//
+//   Additionally the grid line hierarchy now matches the Sudoku screens:
+//     • Thin inner lines, medium outer-cell borders, thick board outline.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -18,8 +32,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
@@ -28,6 +45,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.enigma.littlegames.domain.Sfx
 import com.enigma.littlegames.domain.rememberParticleSystem
 import com.enigma.littlegames.common.*
+
+private const val OUTER_BORDER_W = 3.5f
+private const val CELL_LINE_W    = 0.5f
+private const val CELL_LINE_A    = 0.20f
 
 @Composable
 fun KakuroScreen(hub: HubViewModel) {
@@ -39,6 +60,11 @@ fun KakuroScreen(hub: HubViewModel) {
 
     LaunchedEffect(state.isComplete) {
         if (state.isComplete) {
+            hub.recordSudokuWin(
+                difficulty  = "Kakuro ${state.difficulty.label}",
+                errorCount  = state.errorCount,
+                elapsedSecs = state.elapsedSecs,
+            )
             hub.sound.play(Sfx.VICTORY)
             particles.burst(
                 center = gridCenter,
@@ -97,15 +123,16 @@ fun KakuroScreen(hub: HubViewModel) {
                 }
             }
 
-            // Grid
+            // ── Grid ─────────────────────────────────────────────────────────
             if (state.generating) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = t.primary)
                 }
             } else {
                 BoxWithConstraints(
-                    Modifier.fillMaxWidth().aspectRatio(1f)
-                        .border(2.dp, t.primary.copy(.5f), RoundedCornerShape(4.dp))
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
                         .onGloballyPositioned { c ->
                             gridCenter = Offset(c.size.width / 2f, c.size.height / 2f)
                         }
@@ -120,18 +147,23 @@ fun KakuroScreen(hub: HubViewModel) {
                                     val isSel  = state.selected == row to col
                                     val isErr  = (row to col) in state.errors
                                     val isHi   = state.selected?.let { (sr, sc) ->
-                                        // Highlight run members
                                         state.runs.any { run ->
                                             (sr to sc) in run.cells && (row to col) in run.cells
                                         }
                                     } ?: false
 
-                                    KakuroCellView(cell, cellSize, isSel, isHi, isErr, t,
+                                    KakuroCellView(
+                                        cell, cellSize, isSel, isHi, isErr, t,
                                         Modifier.weight(1f).fillMaxHeight()
                                     ) { vm.select(row, col) }
                                 }
                             }
                         }
+                    }
+
+                    // Outer border on top
+                    Canvas(Modifier.fillMaxSize()) {
+                        drawKakuroOuterBorder(size)
                     }
                 }
             }
@@ -145,7 +177,7 @@ fun KakuroScreen(hub: HubViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Fill each row/column run with unique\ndigits that sum to the clue.",
+                    "Fill each run with unique digits\nthat sum to the clue shown.",
                     color    = t.textSecondary,
                     fontSize = 10.sp,
                     lineHeight = 14.sp,
@@ -166,9 +198,7 @@ fun KakuroScreen(hub: HubViewModel) {
             // Number pad
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 for (n in 1..9) {
-                    KakuroNumBtn(n, t) {
-                        hub.sound.play(Sfx.SUDOKU_PLACE); vm.place(n)
-                    }
+                    KakuroNumBtn(n, t) { hub.sound.play(Sfx.SUDOKU_PLACE); vm.place(n) }
                 }
             }
 
@@ -202,7 +232,9 @@ fun KakuroScreen(hub: HubViewModel) {
     }
 }
 
-// ── Cell composable ───────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Cell composable
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun KakuroCellView(
@@ -217,13 +249,14 @@ private fun KakuroCellView(
 ) {
     when (cell) {
         is KakuroCell.Clue -> {
-            // Black clue cell with diagonal split
+            // Black clue cell — draw diagonal + clues entirely in Canvas
             Box(
-                modifier.background(Color(0xFF0A0C12))
-                    .border(.5.dp, t.border.copy(.4f))
+                modifier
+                    .background(Color(0xFF080A10))
+                    .border(0.5.dp, t.border.copy(.25f))
             ) {
                 Canvas(Modifier.fillMaxSize()) {
-                    drawKakuroClueCell(cell.down, cell.right, t.primary, t.textSecondary)
+                    drawKakuroClueCell(cell.down, cell.right, t.primary)
                 }
             }
         }
@@ -237,8 +270,9 @@ private fun KakuroCellView(
                 }, tween(100), label = "kk_bg"
             )
             Box(
-                modifier.background(bg)
-                    .border(.5.dp, if (isSelected) t.primary.copy(.6f) else t.border.copy(.3f))
+                modifier
+                    .background(bg)
+                    .border(0.5.dp, Color.White.copy(CELL_LINE_A))
                     .clickable(onClick = onClick),
                 contentAlignment = Alignment.Center
             ) {
@@ -258,48 +292,84 @@ private fun KakuroCellView(
     }
 }
 
-/**
- * Draw a Kakuro clue cell:
- *  - Diagonal line from top-right to bottom-left
- *  - Down clue in the top-right triangle
- *  - Right (across) clue in the bottom-left triangle
- */
-private fun DrawScope.drawKakuroClueCell(down: Int?, right: Int?, primary: Color, secondary: Color) {
-    val w = size.width; val h = size.height
+// ─────────────────────────────────────────────────────────────────────────────
+// Kakuro clue cell drawing
+//
+//  Layout of a clue cell:
+//
+//    ┌──────────┐
+//    │       /dd│   dd = down clue  (top-right triangle)
+//    │      /   │   The run goes DOWNWARD from the cell below this one.
+//    │     /    │
+//    │    /     │
+//    │rr /      │   rr = right/across clue (bottom-left triangle)
+//    │  /       │   The run goes RIGHTWARD from the cell to the right of this one.
+//    └──────────┘
+//
+//  The diagonal line runs from TOP-LEFT to BOTTOM-RIGHT.
+//  Down clue text: right-aligned in the upper-right region.
+//  Right clue text: left-aligned in the lower-left region.
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // Background already set by Box; just draw the diagonal line
+private fun DrawScope.drawKakuroClueCell(down: Int?, right: Int?, primary: Color) {
+    val w = size.width
+    val h = size.height
+
+    // Diagonal line: top-left → bottom-right
     drawLine(
-        color       = secondary.copy(.5f),
-        start       = Offset(0f, 0f),
-        end         = Offset(w, h),
-        strokeWidth = 1.2f,
+        color       = Color.White.copy(alpha = 0.30f),
+        start       = Offset(2f, 2f),
+        end         = Offset(w - 2f, h - 2f),
+        strokeWidth = 1.0f,
     )
 
-    // Down clue — top-right area
+    val canvas = drawContext.canvas.nativeCanvas
+    val textSize = h * 0.29f
+    val margin   = h * 0.06f   // small padding from edges
+
+    // ── DOWN clue — top-right triangle ───────────────────────────────────────
+    // Text sits in the upper-right half, right-aligned near the right edge,
+    // and vertically centred in the top half of the cell.
     if (down != null) {
-        // We can't draw text in DrawScope directly; use Canvas with nativeCanvas
         val paint = Paint().apply {
-            color     = primary.copy(.9f).toArgb()
-            textSize  = h * 0.28f
-            textAlign = Paint.Align.RIGHT
+            color       = primary.copy(alpha = 0.95f).toArgb()
+            this.textSize = textSize
+            textAlign   = Paint.Align.RIGHT
             isAntiAlias = true
+            typeface    = Typeface.DEFAULT_BOLD
         }
-        drawContext.canvas.nativeCanvas.drawText("$down", w - 2f, h * 0.40f, paint)
+        // Baseline sits at ~40% of cell height — firmly in the upper half
+        canvas.drawText("$down", w - margin, h * 0.40f, paint)
     }
 
-    // Right (across) clue — bottom-left area
+    // ── RIGHT (across) clue — bottom-left triangle ────────────────────────────
+    // Text sits in the lower-left half, left-aligned near the left edge,
+    // and vertically centred in the bottom half of the cell.
     if (right != null) {
         val paint = Paint().apply {
-            color     = primary.copy(.9f).toArgb()
-            textSize  = h * 0.28f
-            textAlign = Paint.Align.LEFT
+            color       = primary.copy(alpha = 0.95f).toArgb()
+            this.textSize = textSize
+            textAlign   = Paint.Align.LEFT
             isAntiAlias = true
+            typeface    = Typeface.DEFAULT_BOLD
         }
-        drawContext.canvas.nativeCanvas.drawText("$right", 2f, h - 2f, paint)
+        // Baseline at ~88% of cell height — firmly in the lower half
+        canvas.drawText("$right", margin, h * 0.88f, paint)
     }
 }
 
-// ── Number button ─────────────────────────────────────────────────────────────
+/** Thick outer board border drawn on top of all cells. */
+private fun DrawScope.drawKakuroOuterBorder(canvasSize: Size) {
+    val half  = OUTER_BORDER_W / 2f
+    val color = Color.White.copy(alpha = 0.75f)
+    val rect  = Rect(half, half, canvasSize.width - half, canvasSize.height - half)
+    drawRect(color, topLeft = rect.topLeft, size = rect.size,
+        style = Stroke(width = OUTER_BORDER_W))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Number pad button
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun KakuroNumBtn(n: Int, t: GameTheme, onClick: () -> Unit) {

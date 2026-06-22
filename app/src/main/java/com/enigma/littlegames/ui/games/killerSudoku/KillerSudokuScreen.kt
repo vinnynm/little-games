@@ -1,12 +1,12 @@
 package com.enigma.littlegames.ui.games.killerSudoku
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Killer Sudoku Screen — Phase 3 UI polish:
-//   • Cage outlines drawn in a second pass AFTER cell backgrounds, so they
-//     are always visible even when the cell is highlighted or selected.
-//   • Dashed cage border style (dashPathEffect) for the classic KS look.
-//   • Larger number pad buttons.
-//   • Cleaner stat row layout.
+// Killer Sudoku Screen — UI polish pass:
+//   • Cage borders: dashed, lower alpha (0.55) — regions readable, not harsh
+//   • Inner grid lines: higher alpha (0.20 thin / 0.45 box), lighter tint
+//   • 3×3 box dividers: ~1.5× inner-line width, clearly distinct
+//   • Outer board border: ~2× box-divider width, very prominent
+//   • Cage colours retained; cage min-size ≥ 2 enforced in ViewModel
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.*
@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -40,8 +41,7 @@ import com.enigma.littlegames.common.MiniStat
 import com.enigma.littlegames.common.ParticleOverlay
 import com.enigma.littlegames.common.ThemedButton
 
-// 18 subtle cage background colours — slightly brighter than Phase 2
-// so cage regions remain perceptible even under the highlight tint
+// 18 subtle cage background colours — kept from original for visual region identity
 val CAGE_COLORS = listOf(
     Color(0xFF1A3828), Color(0xFF162A3A), Color(0xFF2A2618), Color(0xFF261828),
     Color(0xFF18262A), Color(0xFF262A18), Color(0xFF2A1818), Color(0xFF182A26),
@@ -49,6 +49,18 @@ val CAGE_COLORS = listOf(
     Color(0xFF2A182A), Color(0xFF1E1E1E), Color(0xFF262626), Color(0xFF1A261A),
     Color(0xFF2A1E26), Color(0xFF1E2A26),
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Line weight constants — tweak here to adjust the whole visual hierarchy
+// ─────────────────────────────────────────────────────────────────────────────
+private const val INNER_LINE_W   = 0.6f   // thin grid lines between individual cells
+private const val BOX_DIVIDER_W  = 1.8f   // 3×3 box dividers
+private const val OUTER_BORDER_W = 4.0f   // outer board border (drawn as Canvas overlay)
+private const val CAGE_STROKE_W  = 2.0f   // cage outline stroke
+
+private const val INNER_ALPHA    = 0.18f  // thin cell lines
+private const val BOX_ALPHA      = 0.50f  // box divider lines
+private const val CAGE_ALPHA     = 0.55f  // cage outlines (dashed)
 
 @Composable
 fun KillerSudokuScreen(hub: HubViewModel) {
@@ -97,7 +109,6 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 }
             )
 
-            // Stats
             Row(
                 Modifier.fillMaxWidth().padding(bottom = 6.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
@@ -107,7 +118,6 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 MiniStat("NOTES",   if (state.noteMode) "ON" else "OFF")
             }
 
-            // Completion banner
             AnimatedVisibility(state.isComplete) {
                 Surface(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -124,7 +134,7 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 }
             }
 
-            // Grid
+            // ── Grid ─────────────────────────────────────────────────────────
             if (state.generating) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = t.primary)
@@ -141,12 +151,13 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                     Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)
-                        .border(2.dp, t.primary.copy(.7f), RoundedCornerShape(4.dp))
                         .onGloballyPositioned { c ->
                             gridCenter = Offset(c.size.width / 2f, c.size.height / 2f)
                         }
                 ) {
-                    // ── PASS 1: draw cell backgrounds ─────────────────────────
+                    val cellPx = with(LocalDensity.current) { (maxWidth / 9).toPx() }
+
+                    // ── PASS 1: cell backgrounds ──────────────────────────────
                     Column(Modifier.fillMaxSize()) {
                         for (row in 0..8) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
@@ -162,7 +173,7 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                                     } ?: false
                                     val isErr     = (row to col) in state.errors
                                     val showSum   = cage != null &&
-                                        cage.cells.minWithOrNull(compareBy({ it.first }, { it.second })) == row to col
+                                            cage.cells.minWithOrNull(compareBy({ it.first }, { it.second })) == row to col
 
                                     SKCellView(
                                         row, col, cell, cage, isSel, isHi, isSameVal, isErr,
@@ -177,22 +188,23 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                         }
                     }
 
-                    // ── PASS 2: cage outlines drawn on top of everything ──────
-                    // Using Canvas overlay so borders are never obscured by
-                    // the animated cell backgrounds.
-                    val cellPx = with(LocalDensity.current) {
-                        (maxWidth / 9).toPx()
-                    }
+                    // ── PASS 2: Canvas overlay — grid lines + cage borders ────
                     Canvas(Modifier.fillMaxSize()) {
+                        // Draw inner cell grid lines first (lowest layer)
+                        drawInnerGridLines(size, t.primary)
+                        // Then cage dashed outlines
                         drawCageOutlines(state.cageBorders, cellPx, t.primary)
+                        // Then box dividers on top of cages
                         drawBoxDividers(size, t.primary)
+                        // Outer border on top of everything
+                        drawOuterBorder(size, t.primary)
                     }
                 }
             }
 
             Spacer(Modifier.height(8.dp))
 
-            // Controls row
+            // Controls
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -220,7 +232,7 @@ fun KillerSudokuScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Number pad — slightly larger buttons
+            // Number pad
             val counts = IntArray(10).also { arr ->
                 state.board.forEach { row -> row.forEach { if (it.value != 0) arr[it.value]++ } }
             }
@@ -267,17 +279,37 @@ fun KillerSudokuScreen(hub: HubViewModel) {
     }
 }
 
-// ── Cage outline drawing ──────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Canvas drawing helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Draw dashed cage borders in a single Canvas pass on top of all cell
- * backgrounds.  Each border segment is 2 dp wide and uses a dash pattern
- * so the classic Killer Sudoku look is preserved.
+ * Thin inner cell-to-cell lines — very subtle, just enough to delineate cells.
+ * Drawn BEFORE cage outlines so cages always read on top.
+ */
+private fun DrawScope.drawInnerGridLines(canvasSize: Size, primary: Color) {
+    val cellPx = canvasSize.width / 9f
+    val color  = Color.White.copy(alpha = INNER_ALPHA)
+
+    for (i in 1..8) {
+        if (i % 3 == 0) continue   // box dividers handled separately
+        val x = i * cellPx
+        drawLine(color, Offset(x, 0f), Offset(x, canvasSize.height), INNER_LINE_W)
+        val y = i * cellPx
+        drawLine(color, Offset(0f, y), Offset(canvasSize.width, y), INNER_LINE_W)
+    }
+}
+
+/**
+ * Dashed cage outlines — drawn after inner grid lines, before box dividers.
+ * Lower alpha keeps them readable without overwhelming the number content.
  */
 private fun DrawScope.drawCageOutlines(borders: CageBorders, cellPx: Float, primary: Color) {
-    val paint  = Color.White.copy(alpha = 0.80f)   // bright white so it reads on every bg
-    val stroke = Stroke(width = 2.5f)
-    val inset  = cellPx * 0.04f   // tiny inset so borders don't overlap the grid lines
+    val color  = Color.White.copy(alpha = CAGE_ALPHA)
+    // Dash pattern: 4px on, 3px off — classic KS dashed look
+    val dash   = PathEffect.dashPathEffect(floatArrayOf(4f, 3f), 0f)
+    val stroke = Stroke(width = CAGE_STROKE_W, pathEffect = dash)
+    val inset  = cellPx * 0.05f
 
     borders.forEach { (cell, sides) ->
         val (row, col) = cell
@@ -286,31 +318,46 @@ private fun DrawScope.drawCageOutlines(borders: CageBorders, cellPx: Float, prim
         val right  = left  + cellPx - inset * 2
         val bottom = top   + cellPx - inset * 2
 
-        if (CageSide.TOP    in sides) drawLine(paint, Offset(left, top),    Offset(right, top),    stroke.width)
-        if (CageSide.BOTTOM in sides) drawLine(paint, Offset(left, bottom), Offset(right, bottom), stroke.width)
-        if (CageSide.LEFT   in sides) drawLine(paint, Offset(left, top),    Offset(left, bottom),  stroke.width)
-        if (CageSide.RIGHT  in sides) drawLine(paint, Offset(right, top),   Offset(right, bottom), stroke.width)
+        val path = Path()
+        if (CageSide.TOP    in sides) { path.moveTo(left, top);    path.lineTo(right, top) }
+        if (CageSide.BOTTOM in sides) { path.moveTo(left, bottom); path.lineTo(right, bottom) }
+        if (CageSide.LEFT   in sides) { path.moveTo(left, top);    path.lineTo(left, bottom) }
+        if (CageSide.RIGHT  in sides) { path.moveTo(right, top);   path.lineTo(right, bottom) }
+        drawPath(path, color, style = stroke)
     }
 }
 
-/** Redraw the 3×3 box dividers on top so they're always crisp. */
+/**
+ * 3×3 box dividers — medium weight, clearly separating the nine boxes.
+ * Drawn after cage outlines so they're always visible.
+ */
 private fun DrawScope.drawBoxDividers(canvasSize: Size, primary: Color) {
     val cellPx = canvasSize.width / 9f
-    val thick  = Stroke(width = 2.5f)
-    val color  = Color.White.copy(alpha = 0.55f)
-    // Vertical box lines
+    val color  = Color.White.copy(alpha = BOX_ALPHA)
+
     for (i in listOf(3, 6)) {
         val x = i * cellPx
-        drawLine(color, Offset(x, 0f), Offset(x, canvasSize.height), thick.width)
-    }
-    // Horizontal box lines
-    for (i in listOf(3, 6)) {
+        drawLine(color, Offset(x, 0f), Offset(x, canvasSize.height), BOX_DIVIDER_W)
         val y = i * cellPx
-        drawLine(color, Offset(0f, y), Offset(canvasSize.width, y), thick.width)
+        drawLine(color, Offset(0f, y), Offset(canvasSize.width, y), BOX_DIVIDER_W)
     }
 }
 
-// ── Cell ──────────────────────────────────────────────────────────────────────
+/**
+ * Very thick outer border — drawn last so nothing obscures it.
+ * Inset by half its own stroke width so it stays inside the composable bounds.
+ */
+private fun DrawScope.drawOuterBorder(canvasSize: Size, primary: Color) {
+    val half  = OUTER_BORDER_W / 2f
+    val color = Color.White.copy(alpha = 0.80f)
+    val rect  = androidx.compose.ui.geometry.Rect(half, half, canvasSize.width - half, canvasSize.height - half)
+    drawRect(color, topLeft = rect.topLeft, size = rect.size,
+        style = Stroke(width = OUTER_BORDER_W))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cell composable
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 fun SKCellView(
@@ -336,29 +383,14 @@ fun SKCellView(
         }, tween(120), label = "sk_bg"
     )
 
-    // Thin grid lines drawn via drawBehind — cage borders are drawn in the
-    // parent Canvas overlay so they are always on top.
+    // No grid lines drawn here — all lines are handled in the Canvas overlay
     Box(
         modifier
             .background(bg)
-            .drawBehind {
-                val thick = Color.White.copy(.35f)
-                val thin  = Color.White.copy(.07f)
-                if (col < 8) drawLine(
-                    if ((col + 1) % 3 == 0) thick else thin,
-                    Offset(size.width, 0f), Offset(size.width, size.height),
-                    if ((col + 1) % 3 == 0) 1.5f else 0.5f
-                )
-                if (row < 8) drawLine(
-                    if ((row + 1) % 3 == 0) thick else thin,
-                    Offset(0f, size.height), Offset(size.width, size.height),
-                    if ((row + 1) % 3 == 0) 1.5f else 0.5f
-                )
-            }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        // Cage sum label in top-left corner of the first cell
+        // Cage sum label in top-left corner of the first cell of each cage
         if (showCageSum && cage != null) {
             Box(
                 Modifier.align(Alignment.TopStart)
@@ -401,7 +433,9 @@ fun SKCellView(
     }
 }
 
-// ── Number button ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Number pad button
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 fun SKNumBtn(n: Int, remaining: Int, isActive: Boolean, t: GameTheme, onClick: () -> Unit) {

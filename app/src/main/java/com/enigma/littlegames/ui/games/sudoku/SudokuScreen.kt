@@ -1,9 +1,11 @@
 package com.enigma.littlegames.ui.games.sudoku
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Classic Sudoku Screen
-// Clean 9×9 grid with subtle 3×3 box shading, note mode, error highlighting,
-// and particles on completion — consistent with the hub theme system.
+// Classic Sudoku Screen — UI polish pass (matching KillerSudoku improvements):
+//   • Inner cell grid lines: lower alpha, very subtle
+//   • 3×3 box dividers: medium weight, clearly visible
+//   • Outer board border: very thick — about 2× box-divider weight
+//   • Alternating 3×3 box shading retained for orientation aid
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.*
@@ -19,6 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -28,6 +31,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.enigma.littlegames.domain.Sfx
 import com.enigma.littlegames.domain.rememberParticleSystem
 import com.enigma.littlegames.common.*
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Line weight constants — mirrors KillerSudokuScreen for visual consistency
+// ─────────────────────────────────────────────────────────────────────────────
+private const val INNER_LINE_W   = 0.6f
+private const val BOX_DIVIDER_W  = 1.8f
+private const val OUTER_BORDER_W = 4.0f
+
+private const val INNER_ALPHA    = 0.18f
+private const val BOX_ALPHA      = 0.50f
 
 @Composable
 fun SudokuScreen(hub: HubViewModel) {
@@ -96,19 +109,21 @@ fun SudokuScreen(hub: HubViewModel) {
                 }
             }
 
-            // Grid
+            // ── Grid ─────────────────────────────────────────────────────────
             if (state.generating) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = t.primary)
                 }
             } else {
                 BoxWithConstraints(
-                    Modifier.fillMaxWidth().aspectRatio(1f)
-                        .border(2.dp, t.primary.copy(.7f), RoundedCornerShape(4.dp))
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
                         .onGloballyPositioned { c ->
                             gridCenter = Offset(c.size.width / 2f, c.size.height / 2f)
                         }
                 ) {
+                    // ── PASS 1: cell backgrounds ──────────────────────────────
                     Column(Modifier.fillMaxSize()) {
                         for (row in 0..8) {
                             Row(Modifier.weight(1f).fillMaxWidth()) {
@@ -122,6 +137,7 @@ fun SudokuScreen(hub: HubViewModel) {
                                         state.board[sr][sc].value != 0 && state.board[sr][sc].value == cell.value
                                     } ?: false
                                     val isErr     = (row to col) in state.errors
+                                    // Alternate 3×3 box shade for orientation
                                     val boxShade  = ((row / 3) + (col / 3)) % 2 == 0
 
                                     ClassicSudokuCell(
@@ -133,10 +149,11 @@ fun SudokuScreen(hub: HubViewModel) {
                         }
                     }
 
-                    // Box dividers on top
-                    val cellPx = with(LocalDensity.current) { (maxWidth / 9).toPx() }
+                    // ── PASS 2: Canvas overlay — all grid structure on top ────
                     Canvas(Modifier.fillMaxSize()) {
-                        drawSudokuBoxLines(size, t.primary)
+                        drawSudokuInnerLines(size)
+                        drawSudokuBoxDividers(size)
+                        drawSudokuOuterBorder(size)
                     }
                 }
             }
@@ -223,7 +240,47 @@ fun SudokuScreen(hub: HubViewModel) {
     }
 }
 
-// ── Cell ──────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Canvas drawing helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Thin lines between individual cells (skips box-divider positions). */
+private fun DrawScope.drawSudokuInnerLines(canvasSize: Size) {
+    val cellPx = canvasSize.width / 9f
+    val color  = Color.White.copy(alpha = INNER_ALPHA)
+    for (i in 1..8) {
+        if (i % 3 == 0) continue
+        val x = i * cellPx
+        drawLine(color, Offset(x, 0f), Offset(x, canvasSize.height), INNER_LINE_W)
+        val y = i * cellPx
+        drawLine(color, Offset(0f, y), Offset(canvasSize.width, y), INNER_LINE_W)
+    }
+}
+
+/** Medium-weight 3×3 box dividers — drawn after inner lines. */
+private fun DrawScope.drawSudokuBoxDividers(canvasSize: Size) {
+    val cellPx = canvasSize.width / 9f
+    val color  = Color.White.copy(alpha = BOX_ALPHA)
+    for (i in listOf(3, 6)) {
+        val x = i * cellPx
+        drawLine(color, Offset(x, 0f), Offset(x, canvasSize.height), BOX_DIVIDER_W)
+        val y = i * cellPx
+        drawLine(color, Offset(0f, y), Offset(canvasSize.width, y), BOX_DIVIDER_W)
+    }
+}
+
+/** Very thick outer border — drawn last, fully on top. */
+private fun DrawScope.drawSudokuOuterBorder(canvasSize: Size) {
+    val half  = OUTER_BORDER_W / 2f
+    val color = Color.White.copy(alpha = 0.80f)
+    val rect  = androidx.compose.ui.geometry.Rect(half, half, canvasSize.width - half, canvasSize.height - half)
+    drawRect(color, topLeft = rect.topLeft, size = rect.size,
+        style = Stroke(width = OUTER_BORDER_W))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cell composable
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun ClassicSudokuCell(
@@ -233,7 +290,9 @@ private fun ClassicSudokuCell(
     isError: Boolean, t: GameTheme,
     modifier: Modifier, onClick: () -> Unit,
 ) {
-    val baseBg  = if (boxShade) t.surface else t.surfaceVariant
+    // Subtle alternating box shade — slightly lighter than background so boxes
+    // are distinguishable without interfering with selection highlights
+    val baseBg = if (boxShade) t.surfaceVariant else t.surface
     val bg by animateColorAsState(
         when {
             isSelected    -> t.primary.copy(.35f)
@@ -244,23 +303,10 @@ private fun ClassicSudokuCell(
         }, tween(100), label = "s_bg"
     )
 
+    // No grid lines drawn in the cell — all handled by Canvas overlay
     Box(
         modifier
             .background(bg)
-            .drawBehind {
-                val thick = Color.White.copy(.35f)
-                val thin  = Color.White.copy(.07f)
-                if (col < 8) drawLine(
-                    if ((col + 1) % 3 == 0) thick else thin,
-                    Offset(size.width, 0f), Offset(size.width, size.height),
-                    if ((col + 1) % 3 == 0) 1.5f else 0.5f
-                )
-                if (row < 8) drawLine(
-                    if ((row + 1) % 3 == 0) thick else thin,
-                    Offset(0f, size.height), Offset(size.width, size.height),
-                    if ((row + 1) % 3 == 0) 1.5f else 0.5f
-                )
-            }
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
@@ -297,18 +343,9 @@ private fun ClassicSudokuCell(
     }
 }
 
-private fun DrawScope.drawSudokuBoxLines(canvasSize: Size, primary: Color) {
-    val cellPx = canvasSize.width / 9f
-    val color  = Color.White.copy(alpha = 0.55f)
-    for (i in listOf(3, 6)) {
-        val x = i * cellPx
-        drawLine(color, Offset(x, 0f), Offset(x, canvasSize.height), 2.5f)
-        val y = i * cellPx
-        drawLine(color, Offset(0f, y), Offset(canvasSize.width, y), 2.5f)
-    }
-}
-
-// ── Number button ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Number pad button
+// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 fun SudokuNumBtn(n: Int, remaining: Int, isActive: Boolean, t: GameTheme, onClick: () -> Unit) {
