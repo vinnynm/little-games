@@ -1,7 +1,7 @@
 package com.enigma.littlegames.domain
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Achievements screen — shows all 17 achievements, locked ones shown as ???
+// Achievements screen — Phase 4a: 30 achievements, 7 groups
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.core.*
@@ -28,15 +28,19 @@ fun AchievementsScreen(hub: HubViewModel) {
     val ui by hub.ui.collectAsStateWithLifecycle()
 
     val groups = listOf(
-        "LIGHTS OUT"    to listOf(Achievements.LO_FIRST_WIN, Achievements.LO_PERFECT, Achievements.LO_EXPERT, Achievements.LO_SPEED, Achievements.LO_NO_HINT),
-        "PIPE FLOW"     to listOf(Achievements.PIPE_FIRST_WIN, Achievements.PIPE_3STARS, Achievements.PIPE_LEVEL10, Achievements.PIPE_LEVEL24, Achievements.PIPE_NO_SOLVE),
-        "KILLER SUDOKU" to listOf(Achievements.SK_FIRST_WIN, Achievements.SK_NO_ERROR, Achievements.SK_EXPERT, Achievements.SK_FIVE_WINS, Achievements.SK_SPEED_RUN),
-        "HUB"           to listOf(Achievements.ALL_GAMES, Achievements.THEME_EXPLORER),
+        "💡 LIGHTS OUT"        to listOf(Achievements.LO_FIRST_WIN, Achievements.LO_PERFECT, Achievements.LO_EXPERT, Achievements.LO_SPEED, Achievements.LO_NO_HINT),
+        "🔧 PIPE FLOW"         to listOf(Achievements.PIPE_FIRST_WIN, Achievements.PIPE_3STARS, Achievements.PIPE_LEVEL10, Achievements.PIPE_LEVEL24, Achievements.PIPE_NO_SOLVE),
+        "🔢 SUDOKU GAMES"      to listOf(Achievements.SK_FIRST_WIN, Achievements.SK_NO_ERROR, Achievements.SK_EXPERT, Achievements.SK_FIVE_WINS, Achievements.SK_SPEED_RUN),
+        "💣 EXPLODING KITTENS" to listOf(Achievements.EK_FIRST_WIN, Achievements.EK_DEFUSE, Achievements.EK_BEAT_HARD, Achievements.EK_FIVE_WINS),
+        "🧠 SIMON SAYS"        to listOf(Achievements.SIMON_FIRST, Achievements.SIMON_10, Achievements.SIMON_20, Achievements.SIMON_SPEED),
+        "2️⃣ 2048"              to listOf(Achievements.TFE_FIRST, Achievements.TFE_256, Achievements.TFE_1024, Achievements.TFE_2048),
+        "🎮 HUB"               to listOf(Achievements.ALL_GAMES, Achievements.THEME_EXPLORER, Achievements.COMPLETIONIST),
     )
 
-    Column(
-        Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp)
-    ) {
+    val total    = Achievements.total
+    val unlocked = ui.unlockedIds.size
+
+    Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(20.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { hub.navigate(HubScreen.Home) }) {
@@ -45,29 +49,32 @@ fun AchievementsScreen(hub: HubViewModel) {
             Text("ACHIEVEMENTS", color = t.primary, fontSize = 18.sp,
                 fontWeight = FontWeight.Black, letterSpacing = 4.sp)
             Spacer(Modifier.weight(1f))
-            Text("${ui.unlockedIds.size}/17", color = t.warning,
-                fontSize = 14.sp, fontWeight = FontWeight.Black)
+            Text("$unlocked/$total", color = t.warning, fontSize = 14.sp, fontWeight = FontWeight.Black)
         }
 
-        // Progress bar
-        val pct = ui.unlockedIds.size / 17f
         LinearProgressIndicator(
-            progress = { pct },
+            progress = { unlocked.toFloat() / total },
             modifier = Modifier.fillMaxWidth().height(4.dp).padding(horizontal = 8.dp),
-            color = t.warning, trackColor = t.border
+            color = t.warning, trackColor = t.border,
         )
 
         Spacer(Modifier.height(16.dp))
 
         Column(Modifier.verticalScroll(rememberScrollState())) {
             groups.forEach { (groupName, achievements) ->
-                Text(groupName, color = t.textSecondary, fontSize = 10.sp,
-                    letterSpacing = 2.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp))
-
+                val groupUnlocked = achievements.count { ui.unlockedIds.contains(it.id) }
+                Row(
+                    Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(groupName, color = t.textSecondary, fontSize = 10.sp,
+                        letterSpacing = 2.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f))
+                    Text("$groupUnlocked/${achievements.size}",
+                        color = t.textSecondary, fontSize = 10.sp)
+                }
                 achievements.forEach { ach ->
-                    val unlocked = ui.unlockedIds.contains(ach.id)
-                    AchievementRow(ach, unlocked, t)
+                    AchievementRow(ach, ui.unlockedIds.contains(ach.id), t)
                     Spacer(Modifier.height(6.dp))
                 }
                 Spacer(Modifier.height(8.dp))
@@ -85,7 +92,6 @@ private fun AchievementRow(ach: Achievement, unlocked: Boolean, t: GameTheme) {
         infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "ach_glow_a"
     )
-
     val isHidden = ach.hidden && !unlocked
 
     Row(
@@ -101,29 +107,22 @@ private fun AchievementRow(ach: Achievement, unlocked: Boolean, t: GameTheme) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.size(44.dp)
-                .clip(RoundedCornerShape(10.dp))
+            Modifier.size(44.dp).clip(RoundedCornerShape(10.dp))
                 .background(if (unlocked) t.warning.copy(.15f) else t.border.copy(.3f)),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                if (isHidden) "❓" else ach.emoji,
-                fontSize = 22.sp
-            )
+            Text(if (isHidden) "❓" else ach.emoji, fontSize = 22.sp)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 if (isHidden) "???" else ach.title,
                 color = if (unlocked) t.warning else t.textPrimary,
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp
+                fontWeight = FontWeight.Bold, fontSize = 13.sp
             )
             Text(
                 if (isHidden) "Complete hidden challenge to reveal" else ach.description,
-                color = t.textSecondary,
-                fontSize = 11.sp,
-                lineHeight = 15.sp
+                color = t.textSecondary, fontSize = 11.sp, lineHeight = 15.sp
             )
         }
         if (unlocked) {

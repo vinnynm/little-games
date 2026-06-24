@@ -1,7 +1,7 @@
 package com.enigma.littlegames.common
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root composable — Phase 3: adds Classic Sudoku + Kakuro to screen router
+// GameHubApp — Phase 4a: adds ExplodingKittens, Simon, TwentyFortyEight
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.*
@@ -22,6 +22,9 @@ import com.enigma.littlegames.ui.games.pipeflow.PipeFlowScreen
 import com.enigma.littlegames.ui.games.killerSudoku.KillerSudokuScreen
 import com.enigma.littlegames.ui.games.sudoku.SudokuScreen
 import com.enigma.littlegames.ui.games.kakuro.KakuroScreen
+import com.enigma.littlegames.ui.games.explodingkittens.ui.ExplodingKittensScreen
+import com.enigma.littlegames.ui.games.simon.SimonScreen
+import com.enigma.littlegames.ui.games.twentyfortyeight.TwentyFortyEightScreen
 
 @Composable
 fun GameHubApp(hub: HubViewModel = viewModel()) {
@@ -31,9 +34,7 @@ fun GameHubApp(hub: HubViewModel = viewModel()) {
 
     CompositionLocalProvider(LocalGameTheme provides theme) {
         Box(
-            Modifier
-                .fillMaxSize()
-                .background(theme.background)
+            Modifier.fillMaxSize().background(theme.background)
         ) {
             AnimatedContent(
                 targetState = screen,
@@ -53,6 +54,9 @@ fun GameHubApp(hub: HubViewModel = viewModel()) {
                     HubScreen.KillerSudoku       -> KillerSudokuScreen(hub)
                     HubScreen.Sudoku             -> SudokuScreen(hub)
                     HubScreen.Kakuro             -> KakuroScreen(hub)
+                    HubScreen.ExplodingKittens   -> ExplodingKittensScreen(hub)
+                    HubScreen.Simon              -> SimonScreen(hub)
+                    HubScreen.TwentyFortyEight   -> TwentyFortyEightScreen(hub)
                 }
             }
 

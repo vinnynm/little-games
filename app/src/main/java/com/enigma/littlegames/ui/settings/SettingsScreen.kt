@@ -1,7 +1,7 @@
 package com.enigma.littlegames.ui.settings
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Settings screen — theme picker, sound toggle, about
+// Settings screen — Phase 4a: about section updated for 8 games / 30 achievements
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.foundation.*
@@ -28,9 +28,7 @@ fun SettingsScreen(hub: HubViewModel) {
     val t  = LocalGameTheme.current
     val ui by hub.ui.collectAsStateWithLifecycle()
 
-    Column(
-        Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 20.dp)
-    ) {
+    Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(20.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { hub.navigate(HubScreen.Home) }) {
@@ -62,8 +60,8 @@ fun SettingsScreen(hub: HubViewModel) {
                     checked = ui.soundEnabled,
                     onCheckedChange = { hub.setSoundEnabled(it) },
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor  = t.background,
-                        checkedTrackColor  = t.primary,
+                        checkedThumbColor   = t.background,
+                        checkedTrackColor   = t.primary,
                         uncheckedTrackColor = t.border,
                     )
                 )
@@ -96,13 +94,13 @@ fun SettingsScreen(hub: HubViewModel) {
                             Text(theme.name,
                                 color = if (selected) theme.primary else t.textPrimary,
                                 fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            // Color swatches
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 modifier = Modifier.padding(top = 6.dp)) {
                                 listOf(theme.primary, theme.secondary, theme.accent, theme.background)
                                     .forEach { c ->
-                                        Box(Modifier.size(16.dp).clip(CircleShape).background(c)
-                                            .border(0.5.dp, Color.White.copy(.2f), CircleShape))
+                                        Box(Modifier.size(16.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                                            .background(c).border(0.5.dp, Color.White.copy(.2f),
+                                                androidx.compose.foundation.shape.CircleShape))
                                     }
                             }
                         }
@@ -118,14 +116,18 @@ fun SettingsScreen(hub: HubViewModel) {
             Spacer(Modifier.height(12.dp))
             Surface(color = t.surface, shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Enigma Game Hub  v2.0 — Phase 2", color = t.textPrimary, fontWeight = FontWeight.Bold)
+                    Text("Enigma Game Hub  v4.0 — Phase 4a",
+                        color = t.textPrimary, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
                     listOf(
-                        "🎮  Three complete puzzle games",
+                        "🎮  Eight complete games",
+                        "🧩  Logic: Lights Out · Pipe Flow · Killer Sudoku · Sudoku · Kakuro",
+                        "🃏  Card & Memory: Exploding Kittens · Simon Says",
+                        "🕹️  Arcade: 2048",
                         "🎨  Five customisable themes",
                         "💾  Progress saved via DataStore",
                         "🔊  Sound effects + ambient audio",
-                        "🏆  17 unlockable achievements",
+                        "🏆  30 unlockable achievements",
                         "✨  Canvas particle effects on solve",
                     ).forEach { line ->
                         Text(line, color = t.textSecondary, fontSize = 12.sp,
