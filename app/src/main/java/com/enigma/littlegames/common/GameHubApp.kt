@@ -1,7 +1,7 @@
 package com.enigma.littlegames.common
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GameHubApp — Phase 4a: adds ExplodingKittens, Simon, TwentyFortyEight
+// Root composable — Phase 4d FINAL: all 13 navigable screens
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.*
@@ -22,9 +22,14 @@ import com.enigma.littlegames.ui.games.pipeflow.PipeFlowScreen
 import com.enigma.littlegames.ui.games.killerSudoku.KillerSudokuScreen
 import com.enigma.littlegames.ui.games.sudoku.SudokuScreen
 import com.enigma.littlegames.ui.games.kakuro.KakuroScreen
-import com.enigma.littlegames.ui.games.explodingkittens.ui.ExplodingKittensScreen
 import com.enigma.littlegames.ui.games.simon.SimonScreen
 import com.enigma.littlegames.ui.games.twentyfortyeight.TwentyFortyEightScreen
+import com.enigma.littlegames.ui.games.sliding.SlidingPuzzleScreen
+import com.enigma.littlegames.ui.games.nonogram.NonogramScreen
+import com.enigma.littlegames.ui.games.sokoban.SokobanScreen
+import com.enigma.littlegames.ui.games.flowfree.FlowFreeScreen
+import com.enigma.littlegames.ui.games.wordle.WordleScreen
+import com.enigma.littlegames.ui.games.minesweeper.MinesweeperScreen
 
 @Composable
 fun GameHubApp(hub: HubViewModel = viewModel()) {
@@ -33,9 +38,7 @@ fun GameHubApp(hub: HubViewModel = viewModel()) {
     val theme   = ui.theme
 
     CompositionLocalProvider(LocalGameTheme provides theme) {
-        Box(
-            Modifier.fillMaxSize().background(theme.background)
-        ) {
+        Box(Modifier.fillMaxSize().background(theme.background)) {
             AnimatedContent(
                 targetState = screen,
                 transitionSpec = {
@@ -54,9 +57,14 @@ fun GameHubApp(hub: HubViewModel = viewModel()) {
                     HubScreen.KillerSudoku       -> KillerSudokuScreen(hub)
                     HubScreen.Sudoku             -> SudokuScreen(hub)
                     HubScreen.Kakuro             -> KakuroScreen(hub)
-                    HubScreen.ExplodingKittens   -> ExplodingKittensScreen(hub)
                     HubScreen.Simon              -> SimonScreen(hub)
                     HubScreen.TwentyFortyEight   -> TwentyFortyEightScreen(hub)
+                    HubScreen.SlidingPuzzle      -> SlidingPuzzleScreen(hub)
+                    HubScreen.Nonogram           -> NonogramScreen(hub)
+                    HubScreen.Sokoban            -> SokobanScreen(hub)
+                    HubScreen.FlowFree           -> FlowFreeScreen(hub)
+                    HubScreen.Wordle             -> WordleScreen(hub)
+                    HubScreen.Minesweeper        -> MinesweeperScreen(hub)
                 }
             }
 

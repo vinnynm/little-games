@@ -1,23 +1,29 @@
 package com.enigma.littlegames.ui.games.kakuro
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kakuro Screen — clue-cell rendering fix:
+// Kakuro Screen
 //
-//   Kakuro convention (universally used in published puzzles):
-//     • The clue cell is always the BLACK cell immediately to the LEFT of a
-//       horizontal run, or immediately ABOVE a vertical run.
-//     • The diagonal divides the black cell top-left → bottom-right.
-//     • The DOWN clue sits in the TOP-RIGHT triangle  → it applies to the
-//       run that starts on the row BELOW this cell (going downward).
-//     • The RIGHT (across) clue sits in the BOTTOM-LEFT triangle → it applies
-//       to the run that starts in the column to the RIGHT of this cell.
+// Clue-cell rendering — standard Kakuro convention:
 //
-//   Previous bug: both triangles were drawn but text was mis-positioned so
-//   the down clue appeared where the across clue should be, and vice-versa.
-//   The fix below positions text precisely within each triangle half.
+//   The diagonal runs TOP-LEFT → BOTTOM-RIGHT, splitting the black cell into:
 //
-//   Additionally the grid line hierarchy now matches the Sudoku screens:
-//     • Thin inner lines, medium outer-cell borders, thick board outline.
+//     ┌──────────────┐
+//     │▓▓▓▓▓▓▓/ rr  │   TOP-RIGHT triangle
+//     │▓▓▓▓▓▓/       │   → RIGHT (across) clue
+//     │▓▓▓▓▓/        │   → applies to the horizontal run to the RIGHT
+//     │▓▓▓▓/         │
+//     │ dd /▓▓▓▓▓▓▓  │   BOTTOM-LEFT triangle
+//     │   /▓▓▓▓▓▓▓▓  │   → DOWN clue
+//     │  /▓▓▓▓▓▓▓▓▓  │   → applies to the vertical run BELOW
+//     └──────────────┘
+//
+//   This matches every commercially published Kakuro puzzle.
+//
+// Grid sizing by difficulty (drives aspect-ratio and cell count):
+//   Easy    7×7  →  comfortable for beginners
+//   Medium  9×9  →  standard Kakuro size
+//   Hard   11×11 →  challenging, more constraints
+//   Expert 13×13 →  dense, expert-level
 // ─────────────────────────────────────────────────────────────────────────────
 
 import android.graphics.Paint
@@ -47,7 +53,6 @@ import com.enigma.littlegames.domain.rememberParticleSystem
 import com.enigma.littlegames.common.*
 
 private const val OUTER_BORDER_W = 3.5f
-private const val CELL_LINE_W    = 0.5f
 private const val CELL_LINE_A    = 0.20f
 
 @Composable
@@ -80,7 +85,11 @@ fun KakuroScreen(hub: HubViewModel) {
 
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize().systemBarsPadding().background(t.background).padding(horizontal = 12.dp),
+            Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .background(t.background)
+                .padding(horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             val timer = remember(state.elapsedSecs) {
@@ -89,15 +98,23 @@ fun KakuroScreen(hub: HubViewModel) {
 
             GameTopBar(
                 title    = "KAKURO",
-                subtitle = "${state.difficulty.emoji} ${state.difficulty.label}",
+                subtitle = "${state.difficulty.emoji} ${state.difficulty.label}  ·  ${state.size}×${state.size}",
                 onBack   = { hub.navigate(HubScreen.Home) },
                 actions  = {
-                    Text(timer, color = t.primary, fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
+                    Text(
+                        timer,
+                        color      = t.primary,
+                        fontSize   = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier   = Modifier.padding(end = 8.dp),
+                    )
                 }
             )
 
-            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
                 MiniStat("ERRORS", "${state.errorCount}")
                 val whiteFilled = state.cells.sumOf { row ->
                     row.count { cell -> cell is KakuroCell.White && cell.value != 0 }
@@ -112,11 +129,15 @@ fun KakuroScreen(hub: HubViewModel) {
             AnimatedVisibility(state.isComplete) {
                 Surface(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    color  = t.success.copy(.15f), shape = RoundedCornerShape(10.dp),
+                    color  = t.success.copy(.15f),
+                    shape  = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, t.success.copy(.5f))
                 ) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center) {
+                    Row(
+                        Modifier.padding(12.dp),
+                        verticalAlignment     = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
                         Text("🎉  KAKURO SOLVED!", color = t.success, fontWeight = FontWeight.Black, fontSize = 15.sp)
                         Text("  ·  ${state.errorCount} errors  ·  $timer", color = t.textSecondary, fontSize = 11.sp)
                     }
@@ -125,10 +146,14 @@ fun KakuroScreen(hub: HubViewModel) {
 
             // ── Grid ─────────────────────────────────────────────────────────
             if (state.generating) {
-                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = t.primary)
-                }
+                Box(
+                    Modifier.fillMaxWidth().weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) { CircularProgressIndicator(color = t.primary) }
             } else {
+                // The grid is always square; we constrain to the minimum of
+                // available width and a reasonable fraction of screen height
+                // so larger grids don't overflow on small screens.
                 BoxWithConstraints(
                     Modifier
                         .fillMaxWidth()
@@ -154,14 +179,14 @@ fun KakuroScreen(hub: HubViewModel) {
 
                                     KakuroCellView(
                                         cell, cellSize, isSel, isHi, isErr, t,
-                                        Modifier.weight(1f).fillMaxHeight()
+                                        Modifier.weight(1f).fillMaxHeight(),
                                     ) { vm.select(row, col) }
                                 }
                             }
                         }
                     }
 
-                    // Outer border on top
+                    // Outer border drawn on top of all cells
                     Canvas(Modifier.fillMaxSize()) {
                         drawKakuroOuterBorder(size)
                     }
@@ -170,24 +195,27 @@ fun KakuroScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Controls
+            // ── Controls ─────────────────────────────────────────────────────
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment     = Alignment.CenterVertically,
             ) {
                 Text(
                     "Fill each run with unique digits\nthat sum to the clue shown.",
-                    color    = t.textSecondary,
-                    fontSize = 10.sp,
+                    color      = t.textSecondary,
+                    fontSize   = 10.sp,
                     lineHeight = 14.sp,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
-                        Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(t.surface)
+                        Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(t.surface)
                             .border(1.dp, t.border, RoundedCornerShape(8.dp))
                             .clickable { hub.sound.play(Sfx.TAP); vm.erase() },
-                        contentAlignment = Alignment.Center
+                        contentAlignment = Alignment.Center,
                     ) { Text("⌫", fontSize = 18.sp) }
                     ThemedButton("Solve", { hub.sound.play(Sfx.TAP); vm.solve() }, outlined = true)
                 }
@@ -206,22 +234,30 @@ fun KakuroScreen(hub: HubViewModel) {
 
             // Difficulty tabs
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(t.surface).padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(t.surface)
+                    .padding(3.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 KakuroDifficulty.entries.forEach { d ->
                     val sel = state.difficulty == d
                     Box(
-                        Modifier.weight(1f).clip(RoundedCornerShape(7.dp))
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(7.dp))
                             .background(if (sel) t.primary else Color.Transparent)
                             .clickable { hub.sound.play(Sfx.TAP); vm.newGame(d) }
                             .padding(vertical = 7.dp),
-                        contentAlignment = Alignment.Center
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text("${d.emoji} ${d.label.take(3)}",
+                        Text(
+                            "${d.emoji} ${d.label.take(3)}",
                             color      = if (sel) t.background else t.textSecondary,
                             fontSize   = 10.sp,
-                            fontWeight = if (sel) FontWeight.Black else FontWeight.Normal)
+                            fontWeight = if (sel) FontWeight.Black else FontWeight.Normal,
+                        )
                     }
                 }
             }
@@ -249,7 +285,7 @@ private fun KakuroCellView(
 ) {
     when (cell) {
         is KakuroCell.Clue -> {
-            // Black clue cell — draw diagonal + clues entirely in Canvas
+            // Black clue cell — diagonal + clue numbers drawn entirely in Canvas
             Box(
                 modifier
                     .background(Color(0xFF080A10))
@@ -260,6 +296,7 @@ private fun KakuroCellView(
                 }
             }
         }
+
         is KakuroCell.White -> {
             val bg by animateColorAsState(
                 when {
@@ -267,14 +304,16 @@ private fun KakuroCellView(
                     isError       -> Color(0xFFE94560).copy(.22f)
                     isHighlighted -> t.primary.copy(.10f)
                     else          -> t.surface
-                }, tween(100), label = "kk_bg"
+                },
+                tween(100),
+                label = "kk_bg",
             )
             Box(
                 modifier
                     .background(bg)
                     .border(0.5.dp, Color.White.copy(CELL_LINE_A))
                     .clickable(onClick = onClick),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 if (cell.value != 0) {
                     Text(
@@ -293,29 +332,34 @@ private fun KakuroCellView(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kakuro clue cell drawing
+// Kakuro clue cell drawing — STANDARD CONVENTION
 //
-//  Layout of a clue cell:
+//  Diagonal: top-left → bottom-right
+//
+//  TOP-RIGHT triangle  →  RIGHT (across) clue  →  field: `right`
+//    • This cell is to the LEFT of a horizontal run.
+//    • Text: right-aligned, upper half of cell.
+//
+//  BOTTOM-LEFT triangle  →  DOWN clue  →  field: `down`
+//    • This cell is ABOVE a vertical run.
+//    • Text: left-aligned, lower half of cell.
+//
+//  Example (cell has both clues, down=14, right=7):
 //
 //    ┌──────────┐
-//    │       /dd│   dd = down clue  (top-right triangle)
-//    │      /   │   The run goes DOWNWARD from the cell below this one.
+//    │        7 │   ← right/across clue, top-right
+//    │       /  │
+//    │      /   │
 //    │     /    │
-//    │    /     │
-//    │rr /      │   rr = right/across clue (bottom-left triangle)
-//    │  /       │   The run goes RIGHTWARD from the cell to the right of this one.
+//    │ 14 /     │   ← down clue, bottom-left
 //    └──────────┘
-//
-//  The diagonal line runs from TOP-LEFT to BOTTOM-RIGHT.
-//  Down clue text: right-aligned in the upper-right region.
-//  Right clue text: left-aligned in the lower-left region.
 // ─────────────────────────────────────────────────────────────────────────────
 
 private fun DrawScope.drawKakuroClueCell(down: Int?, right: Int?, primary: Color) {
     val w = size.width
     val h = size.height
 
-    // Diagonal line: top-left → bottom-right
+    // Diagonal: top-left → bottom-right
     drawLine(
         color       = Color.White.copy(alpha = 0.30f),
         start       = Offset(2f, 2f),
@@ -323,14 +367,14 @@ private fun DrawScope.drawKakuroClueCell(down: Int?, right: Int?, primary: Color
         strokeWidth = 1.0f,
     )
 
-    val canvas = drawContext.canvas.nativeCanvas
+    val canvas   = drawContext.canvas.nativeCanvas
     val textSize = h * 0.29f
-    val margin   = h * 0.06f   // small padding from edges
+    val margin   = h * 0.07f
 
-    // ── DOWN clue — top-right triangle ───────────────────────────────────────
-    // Text sits in the upper-right half, right-aligned near the right edge,
-    // and vertically centred in the top half of the cell.
-    if (down != null) {
+    // ── RIGHT (across) clue — TOP-RIGHT triangle ──────────────────────────────
+    // Text sits in the upper-right half.
+    // Right-aligned near the right edge, baseline at ~38% of cell height.
+    if (right != null) {
         val paint = Paint().apply {
             color       = primary.copy(alpha = 0.95f).toArgb()
             this.textSize = textSize
@@ -338,14 +382,13 @@ private fun DrawScope.drawKakuroClueCell(down: Int?, right: Int?, primary: Color
             isAntiAlias = true
             typeface    = Typeface.DEFAULT_BOLD
         }
-        // Baseline sits at ~40% of cell height — firmly in the upper half
-        canvas.drawText("$down", w - margin, h * 0.40f, paint)
+        canvas.drawText("$right", w - margin, h * 0.38f, paint)
     }
 
-    // ── RIGHT (across) clue — bottom-left triangle ────────────────────────────
-    // Text sits in the lower-left half, left-aligned near the left edge,
-    // and vertically centred in the bottom half of the cell.
-    if (right != null) {
+    // ── DOWN clue — BOTTOM-LEFT triangle ─────────────────────────────────────
+    // Text sits in the lower-left half.
+    // Left-aligned near the left edge, baseline at ~88% of cell height.
+    if (down != null) {
         val paint = Paint().apply {
             color       = primary.copy(alpha = 0.95f).toArgb()
             this.textSize = textSize
@@ -353,8 +396,7 @@ private fun DrawScope.drawKakuroClueCell(down: Int?, right: Int?, primary: Color
             isAntiAlias = true
             typeface    = Typeface.DEFAULT_BOLD
         }
-        // Baseline at ~88% of cell height — firmly in the lower half
-        canvas.drawText("$right", margin, h * 0.88f, paint)
+        canvas.drawText("$down", margin, h * 0.88f, paint)
     }
 }
 
@@ -363,8 +405,12 @@ private fun DrawScope.drawKakuroOuterBorder(canvasSize: Size) {
     val half  = OUTER_BORDER_W / 2f
     val color = Color.White.copy(alpha = 0.75f)
     val rect  = Rect(half, half, canvasSize.width - half, canvasSize.height - half)
-    drawRect(color, topLeft = rect.topLeft, size = rect.size,
-        style = Stroke(width = OUTER_BORDER_W))
+    drawRect(
+        color,
+        topLeft = rect.topLeft,
+        size    = rect.size,
+        style   = Stroke(width = OUTER_BORDER_W),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -374,9 +420,14 @@ private fun DrawScope.drawKakuroOuterBorder(canvasSize: Size) {
 @Composable
 private fun KakuroNumBtn(n: Int, t: GameTheme, onClick: () -> Unit) {
     Box(
-        Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(t.surfaceVariant)
+        Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(t.surfaceVariant)
             .border(1.dp, t.primary.copy(.25f), RoundedCornerShape(8.dp))
             .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) { Text("$n", color = t.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold) }
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("$n", color = t.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+    }
 }

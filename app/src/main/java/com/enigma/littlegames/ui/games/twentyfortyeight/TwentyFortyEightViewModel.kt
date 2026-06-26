@@ -2,39 +2,36 @@ package com.enigma.littlegames.ui.games.twentyfortyeight
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 2048 — ViewModel
-// Flat IntArray(16) board; slide+merge logic; swipe gesture mapping.
-// Tiles are tracked by stable IDs so Compose can animate merges correctly.
+// 4×4 grid, swipe to slide tiles, merge equals, reach 2048 to win.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.*
+import kotlin.random.Random
 
 enum class SwipeDir { UP, DOWN, LEFT, RIGHT }
 
-data class Tile(
-    val id: Int,           // stable across moves for animation keying
+data class TileData(
+    val id: Int,
     val value: Int,
     val row: Int,
     val col: Int,
+    val mergedFrom: List<Int> = emptyList(),  // IDs of source tiles (for animation)
 )
 
 data class TFEState(
-    val tiles: List<Tile>      = emptyList(),
+    val tiles: List<TileData>  = emptyList(),
     val score: Int             = 0,
-    val best: Int              = 0,
+    val bestScore: Int         = 0,
+    val isWon: Boolean         = false,
     val isOver: Boolean        = false,
-    val won: Boolean           = false,         // reached 2048
-    val keepPlaying: Boolean   = false,         // continue after 2048
+    val keepPlaying: Boolean   = false,  // continue after reaching 2048
+    val lastMergeScore: Int    = 0,      // for "score pop" animation
 )
 
 class TwentyFortyEightViewModel : ViewModel() {
-
     private val _state = MutableStateFlow(TFEState())
     val state: StateFlow<TFEState> = _state.asStateFlow()
-
-    // Callback for hub reporting
-    var onWin:   ((score: Int) -> Unit)? = null
-    var onBest:  ((score: Int) -> Unit)? = null
 
     private var nextId = 0
 
@@ -42,135 +39,131 @@ class TwentyFortyEightViewModel : ViewModel() {
 
     fun newGame() {
         nextId = 0
-        val tiles = mutableListOf<Tile>()
-        addRandomTile(tiles)
-        addRandomTile(tiles)
-        _state.update { it.copy(tiles = tiles, score = 0, isOver = false, won = false, keepPlaying = false) }
+        val tiles = mutableListOf<TileData>()
+        val positions = (0..15).shuffled().take(2)
+        positions.forEach { i ->
+            tiles.add(TileData(nextId++, randomValue(), i / 4, i % 4))
+        }
+        _state.update { it.copy(
+            tiles = tiles, score = 0, isWon = false,
+            isOver = false, keepPlaying = false, lastMergeScore = 0,
+        )}
     }
 
-    fun keepPlaying() { _state.update { it.copy(keepPlaying = true) } }
+    fun keepPlaying() {
+        _state.update { it.copy(keepPlaying = true, isWon = false) }
+    }
 
     fun swipe(dir: SwipeDir) {
         val s = _state.value
-        if (s.isOver) return
-        if (s.won && !s.keepPlaying) return
+        if ((s.isWon && !s.keepPlaying) || s.isOver) return
 
-        val board   = tilesToBoard(s.tiles)
-        val result  = slideBoard(board, dir)
-        if (!result.moved) return
+        val grid = Array(4) { r -> IntArray(4) { c ->
+            s.tiles.find { it.row == r && it.col == c }?.value ?: 0
+        }}
 
-        val newScore = s.score + result.points
-        val newBest  = maxOf(s.best, newScore)
-        val newTiles = boardToTiles(result.board)
-        addRandomTile(newTiles)
+        val (newGrid, mergeScore) = slideGrid(grid, dir)
+        if (newGrid.contentDeepEquals(grid)) return  // no change — ignore swipe
 
-        val won   = !s.won && newTiles.any { it.value == 2048 }
-        val over  = isGameOver(newTiles)
-
-        _state.update { it.copy(tiles = newTiles, score = newScore, best = newBest,
-            won = s.won || won, isOver = over) }
-
-        if (won) onWin?.invoke(newScore)
-        if (newScore > s.best) onBest?.invoke(newScore)
-    }
-
-    // ── Board representation ──────────────────────────────────────────────────
-
-    /** Convert tile list → 4×4 IntArray (row-major). */
-    private fun tilesToBoard(tiles: List<Tile>): IntArray {
-        val b = IntArray(16)
-        tiles.forEach { b[it.row * 4 + it.col] = it.value }
-        return b
-    }
-
-    /** Convert 4×4 IntArray → tile list with stable IDs. */
-    private fun boardToTiles(board: IntArray): MutableList<Tile> {
-        val tiles = mutableListOf<Tile>()
-        board.forEachIndexed { idx, v ->
-            if (v != 0) tiles.add(Tile(nextId++, v, idx / 4, idx % 4))
-        }
-        return tiles
-    }
-
-    private fun addRandomTile(tiles: MutableList<Tile>) {
-        val occupied = tiles.map { it.row * 4 + it.col }.toSet()
-        val empty    = (0..15).filter { it !in occupied }
-        if (empty.isEmpty()) return
-        val idx   = empty.random()
-        val value = if (Math.random() < 0.9) 2 else 4
-        tiles.add(Tile(nextId++, value, idx / 4, idx % 4))
-    }
-
-    private fun isGameOver(tiles: List<Tile>): Boolean {
-        if (tiles.size < 16) return false
-        val board = tilesToBoard(tiles)
-        // Check any adjacent equal values
+        val newTiles = mutableListOf<TileData>()
+        var won = false
         for (r in 0..3) for (c in 0..3) {
-            val v = board[r * 4 + c]
-            if (c < 3 && board[r * 4 + c + 1] == v) return false
-            if (r < 3 && board[(r + 1) * 4 + c] == v) return false
-        }
-        return true
-    }
-
-    // ── Slide logic ───────────────────────────────────────────────────────────
-
-    data class SlideResult(val board: IntArray, val points: Int, val moved: Boolean)
-
-    private fun slideBoard(board: IntArray, dir: SwipeDir): SlideResult {
-        val rotated = rotate(board, dir)   // normalise direction to "slide left"
-        var totalPoints = 0
-        var moved       = false
-        val result      = IntArray(16)
-
-        for (row in 0..3) {
-            val line    = IntArray(4) { rotated[row * 4 + it] }
-            val (slid, pts, didMove) = slideLeft(line)
-            for (c in 0..3) result[row * 4 + c] = slid[c]
-            totalPoints += pts
-            if (didMove) moved = true
+            val v = newGrid[r][c]
+            if (v != 0) {
+                newTiles.add(TileData(nextId++, v, r, c))
+                if (v == 2048) won = true
+            }
         }
 
-        return SlideResult(unrotate(result, dir), totalPoints, moved)
+        // Place a new 2 or 4
+        val empties = (0..15).filter { i ->
+            newGrid[i / 4][i % 4] == 0
+        }.shuffled()
+        if (empties.isNotEmpty()) {
+            val i = empties.first()
+            newTiles.add(TileData(nextId++, randomValue(), i / 4, i % 4))
+        }
+
+        val newScore = s.score + mergeScore
+        val newBest  = maxOf(s.bestScore, newScore)
+        val over     = isGameOver(newGrid.apply {
+            if (empties.isNotEmpty()) {
+                val i = empties.first()
+                this[i / 4][i % 4] = newTiles.last().value
+            }
+        })
+
+        _state.update { it.copy(
+            tiles = newTiles,
+            score = newScore,
+            bestScore = newBest,
+            isWon = won && !it.keepPlaying,
+            isOver = over && !won,
+            lastMergeScore = mergeScore,
+        )}
     }
 
-    private fun slideLeft(row: IntArray): Triple<IntArray, Int, Boolean> {
-        val original = row.copyOf()
-        val nonZero  = row.filter { it != 0 }.toMutableList()
-        var points   = 0
-        var i        = 0
+    // ── Slide algorithm ───────────────────────────────────────────────────────
+
+    private fun slideRow(row: IntArray): Pair<IntArray, Int> {
+        val nonZero = row.filter { it != 0 }.toMutableList()
+        var mergeScore = 0
+        var i = 0
         while (i < nonZero.size - 1) {
             if (nonZero[i] == nonZero[i + 1]) {
-                nonZero[i] *= 2
-                points += nonZero[i]
+                val merged = nonZero[i] * 2
+                mergeScore += merged
+                nonZero[i] = merged
                 nonZero.removeAt(i + 1)
             }
             i++
         }
         val result = IntArray(4) { nonZero.getOrElse(it) { 0 } }
-        return Triple(result, points, !result.contentEquals(original))
+        return result to mergeScore
     }
 
-    /** Rotate board so that the desired slide direction becomes "slide left". */
-    private fun rotate(board: IntArray, dir: SwipeDir): IntArray = when (dir) {
-        SwipeDir.LEFT  -> board.copyOf()
-        SwipeDir.RIGHT -> mirrorH(board)
-        SwipeDir.UP    -> transpose(board)
-        SwipeDir.DOWN  -> mirrorH(transpose(board))
+    private fun slideGrid(grid: Array<IntArray>, dir: SwipeDir): Pair<Array<IntArray>, Int> {
+        val rotated = when (dir) {
+            SwipeDir.LEFT  -> grid
+            SwipeDir.RIGHT -> rotateGrid(rotateGrid(grid))  // 180°
+            SwipeDir.UP    -> rotateGrid(grid, ccw = true)   // CCW = slide up becomes slide left
+            SwipeDir.DOWN  -> rotateGrid(grid)               // CW
+        }
+
+        var totalMerge = 0
+        val slid = Array(4) { r ->
+            val (row, ms) = slideRow(rotated[r])
+            totalMerge += ms
+            row
+        }
+
+        val result = when (dir) {
+            SwipeDir.LEFT  -> slid
+            SwipeDir.RIGHT -> rotateGrid(rotateGrid(slid))
+            SwipeDir.UP    -> rotateGrid(slid)               // undo CCW
+            SwipeDir.DOWN  -> rotateGrid(slid, ccw = true)   // undo CW
+        }
+        return result to totalMerge
     }
 
-    private fun unrotate(board: IntArray, dir: SwipeDir): IntArray = when (dir) {
-        SwipeDir.LEFT  -> board.copyOf()
-        SwipeDir.RIGHT -> mirrorH(board)
-        SwipeDir.UP    -> transpose(board)
-        SwipeDir.DOWN  -> transpose(mirrorH(board))
+    /**
+     * Rotate grid 90° clockwise (default) or counter-clockwise.
+     * Clockwise: new[r][c] = old[3-c][r]
+     */
+    private fun rotateGrid(g: Array<IntArray>, ccw: Boolean = false): Array<IntArray> =
+        if (ccw)
+            Array(4) { r -> IntArray(4) { c -> g[c][3 - r] } }
+        else
+            Array(4) { r -> IntArray(4) { c -> g[3 - c][r] } }
+
+    private fun isGameOver(grid: Array<IntArray>): Boolean {
+        for (r in 0..3) for (c in 0..3) {
+            if (grid[r][c] == 0) return false
+            if (r < 3 && grid[r][c] == grid[r + 1][c]) return false
+            if (c < 3 && grid[r][c] == grid[r][c + 1]) return false
+        }
+        return true
     }
 
-    private fun transpose(b: IntArray): IntArray = IntArray(16) { idx ->
-        val r = idx / 4; val c = idx % 4; b[c * 4 + r]
-    }
-
-    private fun mirrorH(b: IntArray): IntArray = IntArray(16) { idx ->
-        val r = idx / 4; val c = idx % 4; b[r * 4 + (3 - c)]
-    }
+    private fun randomValue() = if (Random.nextFloat() < 0.9f) 2 else 4
 }

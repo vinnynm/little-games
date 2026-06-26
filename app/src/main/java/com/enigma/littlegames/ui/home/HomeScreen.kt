@@ -1,12 +1,8 @@
 package com.enigma.littlegames.ui.home
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Home Screen — Phase 4a
-// 8 game cards organised into three sections:
-//   • Logic Puzzles  (Lights Out, Pipe Flow, Killer Sudoku, Sudoku, Kakuro)
-//   • Card & Memory  (Exploding Kittens, Simon Says)
-//   • Arcade         (2048)
-// Stats bar expanded to show EK wins, Simon best, 2048 best.
+// Home Screen — Phase 4d FINAL: 10 games in 4 sections
+// Logic Puzzles · Arcade · Word & Memory · Spatial
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.core.*
@@ -24,7 +20,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.enigma.littlegames.common.*
+import com.enigma.littlegames.common.AchievementToast
+import com.enigma.littlegames.common.HubScreen
+import com.enigma.littlegames.common.HubViewModel
+import com.enigma.littlegames.common.LocalGameTheme
+import com.enigma.littlegames.common.MiniStat
 
 @Composable
 fun HomeScreen(hub: HubViewModel) {
@@ -32,160 +32,167 @@ fun HomeScreen(hub: HubViewModel) {
     val ui by hub.ui.collectAsStateWithLifecycle()
 
     val inf = rememberInfiniteTransition(label = "logo_glow")
-    val glowAlpha by inf.animateFloat(0.4f, 0.9f,
+    val glowAlpha by inf.animateFloat(
+        0.4f, 0.9f,
         infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "glow")
+        label = "glow",
+    )
 
     Box(Modifier.fillMaxSize()) {
         Column(
             Modifier.fillMaxSize().systemBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.height(32.dp))
 
-            // Logo
             Text("ENIGMA", fontSize = 36.sp, fontWeight = FontWeight.Black,
                 letterSpacing = 8.sp, color = t.primary.copy(alpha = glowAlpha))
             Text("GAME HUB", fontSize = 13.sp, letterSpacing = 6.sp,
                 color = t.textSecondary, fontWeight = FontWeight.Bold)
+            Text("10 GAMES", fontSize = 10.sp, letterSpacing = 4.sp,
+                color = t.textSecondary.copy(.55f))
 
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(24.dp))
 
-            // ── Stats grid ────────────────────────────────────────────────────
-            Surface(
-                color = t.surface, shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, t.border),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        MiniStat("LO BEST",  ui.loBestMoves?.let { "$it mv" } ?: "—")
-                        MiniStat("PIPE LVL", "${ui.pipeLevel}/24")
-                        MiniStat("PUZZLES",  "${ui.sudokuWins} ✓")
-                    }
-                    HorizontalDivider(color = t.border, thickness = 0.5.dp)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        MiniStat("EK WINS",  "${ui.ekWins}")
-                        MiniStat("SIMON",    if (ui.simonBest > 0) "Seq ${ui.simonBest}" else "—")
-                        MiniStat("2048 BEST",if (ui.tfeBest > 0) "${ui.tfeBest}" else "—")
-                    }
-                }
+            // Stats grid
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                MiniStat("LO BEST",  ui.loBestMoves?.let { "$it mv" } ?: "—")
+                MiniStat("PIPE LVL", "${ui.pipeLevel}")
+                MiniStat("PUZZLES",  "${ui.sudokuWins} ✓")
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                MiniStat("SIMON",   if (ui.simonBest > 0) "Lv ${ui.simonBest}" else "—")
+                MiniStat("WORDLE",  if (ui.wordleWins > 0) "${ui.wordleWins}W" else "—")
+                MiniStat("SOKOBAN", "Lv ${ui.sokobanLevel}")
             }
 
             Spacer(Modifier.height(24.dp))
 
-            // ── Section: Logic Puzzles ────────────────────────────────────────
-            SectionHeader("🧩  LOGIC PUZZLES", t)
+            // ── LOGIC PUZZLES ─────────────────────────────────────────────────
+            SectionDivider("LOGIC PUZZLES", t.primary)
+            Spacer(Modifier.height(12.dp))
 
-            GameCard(
-                emoji = "💡", title = "LIGHTS OUT", subtitle = "Toggle all 25 lights off",
-                description = "Tap a cell to flip it and its 4 neighbours. GF(2) matrix solver guarantees solvability. Four difficulties, hint system, best-score tracking.",
-                accentColor = Color(0xFFFFD060),
-                stat = ui.loBestMoves?.let { "Best: $it moves" } ?: "Not played yet",
-                onClick = { hub.navigate(HubScreen.LightsOut) }
-            )
-            Spacer(Modifier.height(10.dp))
-
-            GameCard(
-                emoji = "🔧", title = "PIPE FLOW", subtitle = "Connect inlet to outlet",
-                description = "Rotate pipes to seal the circuit. 24-level campaign with rocks, locked pipes, 4-way X junctions, par scoring, and auto-solve hint.",
-                accentColor = t.primary,
-                stat = "Level ${ui.pipeLevel}/24  ·  ⭐ ${ui.pipeStars}",
-                onClick = { hub.navigate(HubScreen.PipeFlow) }
-            )
-            Spacer(Modifier.height(10.dp))
-
-            GameCard(
-                emoji = "🔢", title = "KILLER SUDOKU", subtitle = "Sums inside cages",
-                description = "Procedurally generated 9×9 with cage constraints. Min cage size 2. Easy → Expert. Note mode, error highlighting, hint solver.",
-                accentColor = Color(0xFF4ECCA3),
-                stat = "${ui.sudokuWins} puzzles solved",
-                onClick = { hub.navigate(HubScreen.KillerSudoku) }
-            )
-            Spacer(Modifier.height(10.dp))
-
-            GameCard(
-                emoji = "9️⃣", title = "SUDOKU", subtitle = "Classic 9×9 logic puzzle",
-                description = "The timeless number placement puzzle. Four difficulty levels from Easy (42 givens) to Expert (20 givens). Note mode, hint, error detection.",
-                accentColor = Color(0xFF60A5FA),
-                stat = "Classic mode  ·  ${ui.sudokuWins} puzzles solved",
-                onClick = { hub.navigate(HubScreen.Sudoku) }
-            )
-            Spacer(Modifier.height(10.dp))
-
-            GameCard(
-                emoji = "➕", title = "KAKURO", subtitle = "Number crossword",
-                description = "Fill white cells with 1–9 so every run sums to its clue. No digit repeats in a run. Four grid sizes from Easy 5×7 to Expert 11×11.",
-                accentColor = Color(0xFFA78BFA),
-                stat = "Number crossword  ·  ${ui.sudokuWins} puzzles solved",
-                onClick = { hub.navigate(HubScreen.Kakuro) }
-            )
-
-            Spacer(Modifier.height(22.dp))
-
-            // ── Section: Card & Memory ────────────────────────────────────────
-            SectionHeader("🃏  CARD & MEMORY", t)
-
-            GameCard(
-                emoji = "💣", title = "EXPLODING KITTENS", subtitle = "Don't draw the kitten!",
-                description = "Play action cards, avoid Exploding Kittens, and be the last player standing. Single player vs AI (Easy/Medium/Hard), pass-and-play, and WiFi multiplayer.",
-                accentColor = Color(0xFFFF4500),
-                stat = if (ui.ekWins > 0) "${ui.ekWins} wins" else "Not played yet",
-                onClick = { hub.navigate(HubScreen.ExplodingKittens) }
-            )
-            Spacer(Modifier.height(10.dp))
-
-            GameCard(
-                emoji = "🧠", title = "SIMON SAYS", subtitle = "Remember the sequence",
-                description = "Watch the grid light up in sequence, then reproduce it perfectly. Sequence grows every round. Three modes: Mini (3×3), Classic (5×5), Speed.",
-                accentColor = Color(0xFF34D399),
-                stat = if (ui.simonBest > 0) "Best sequence: ${ui.simonBest}" else "Not played yet",
-                onClick = { hub.navigate(HubScreen.Simon) }
-            )
-
-            Spacer(Modifier.height(22.dp))
-
-            // ── Section: Arcade ───────────────────────────────────────────────
-            SectionHeader("🕹️  ARCADE", t)
-
-            GameCard(
-                emoji = "2️⃣", title = "2048", subtitle = "Merge tiles to reach 2048",
-                description = "Swipe to slide all tiles. Matching tiles merge into their sum. Reach the 2048 tile to win — or keep going for a higher score!",
-                accentColor = Color(0xFFFFD700),
-                stat = if (ui.tfeBest > 0) "Best score: ${ui.tfeBest}" else "Not played yet",
-                onClick = { hub.navigate(HubScreen.TwentyFortyEight) }
-            )
+            GameCard("💡", "LIGHTS OUT", "Toggle all 25 lights off",
+                "Tap a cell to flip it and its 4 neighbours. GF(2) solver. Four difficulties, hint system.",
+                Color(0xFFFFD060),
+                ui.loBestMoves?.let { "Best: $it moves" } ?: "Not played yet",
+            ) { hub.navigate(HubScreen.LightsOut) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("🔢", "KILLER SUDOKU", "Sums inside cages",
+                "Procedural 9×9 with cage constraints. Easy → Expert. Note mode, error highlighting.",
+                Color(0xFF4ECCA3), "${ui.sudokuWins} puzzles solved",
+            ) { hub.navigate(HubScreen.KillerSudoku) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("9️⃣", "SUDOKU", "Classic 9×9 logic puzzle",
+                "The timeless number placement puzzle. Four difficulties. Notes, hint, error detection.",
+                Color(0xFF60A5FA), "${ui.sudokuWins} puzzles solved",
+            ) { hub.navigate(HubScreen.Sudoku) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("➕", "KAKURO", "Number crossword",
+                "Fill runs with 1–9 summing to their clue. No repeats. Easy 5×5 to Expert 11×11.",
+                Color(0xFFA78BFA), "${ui.sudokuWins} puzzles solved",
+            ) { hub.navigate(HubScreen.Kakuro) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("🖼️", "NONOGRAM", "Reveal the hidden picture",
+                "Shade cells using row and column clues to uncover a pixel image. 5×5 to 20×20.",
+                Color(0xFF34D399),
+                if (ui.nonogramWins > 0) "${ui.nonogramWins} pictures revealed" else "Reveal hidden images",
+            ) { hub.navigate(HubScreen.Nonogram) }
 
             Spacer(Modifier.height(20.dp))
 
-            // ── Bottom nav ────────────────────────────────────────────────────
+            // ── ARCADE ────────────────────────────────────────────────────────
+            SectionDivider("ARCADE", t.secondary)
+            Spacer(Modifier.height(12.dp))
+
+            GameCard("🔧", "PIPE FLOW", "Connect inlet to outlet",
+                "Rotate pipes to seal the circuit. 24-level campaign with locks, rocks, and X junctions.",
+                t.primary, "Level ${ui.pipeLevel} / 24  ·  ⭐ ${ui.pipeStars}",
+            ) { hub.navigate(HubScreen.PipeFlow) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("🌈", "FLOW FREE", "Connect the colour dots",
+                "Draw paths to connect each colour pair. Every cell must be filled. Drag to draw.",
+                t.accent,
+                if (ui.flowWins > 0) "${ui.flowWins} puzzles solved" else "Connect all the dots",
+            ) { hub.navigate(HubScreen.FlowFree) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("🀄", "2048", "Swipe to merge tiles",
+                "Slide the board to combine matching tiles. Reach 2048 to win. Simple rules, deep strategy.",
+                Color(0xFFFFB830),
+                if (ui.tfeScore > 0) "Best score: ${ui.tfeScore}" else "Swipe to play",
+            ) { hub.navigate(HubScreen.TwentyFortyEight) }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ── WORD & MEMORY ─────────────────────────────────────────────────
+            SectionDivider("WORD & MEMORY", Color(0xFF60A5FA))
+            Spacer(Modifier.height(12.dp))
+
+            GameCard("📝", "WORDLE", "Guess the 5-letter word",
+                "6 tries to guess the hidden word. Green = right spot, yellow = wrong spot. Daily + free play.",
+                Color(0xFF81C784),
+                if (ui.wordleWins > 0) "${ui.wordleWins} words guessed" else "Can you guess it?",
+            ) { hub.navigate(HubScreen.Wordle) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("👁", "SIMON SAYS", "Memory flash sequence",
+                "Watch the growing sequence of flashing cells, then repeat it. Gets faster every 5 levels.",
+                Color(0xFFFFD060),
+                if (ui.simonBest > 0) "Best: level ${ui.simonBest}" else "Test your memory",
+            ) { hub.navigate(HubScreen.Simon) }
+
+            Spacer(Modifier.height(20.dp))
+
+            // ── SPATIAL ───────────────────────────────────────────────────────
+            SectionDivider("SPATIAL", t.accent)
+            Spacer(Modifier.height(12.dp))
+
+            GameCard("📦", "SOKOBAN", "Push boxes onto targets",
+                "Plan ahead to push every box onto its goal. Undo any mistake. 30 handcrafted levels.",
+                Color(0xFFFFB830),
+                if (ui.sokobanLevel > 1) "Reached level ${ui.sokobanLevel}" else "30 levels to solve",
+            ) { hub.navigate(HubScreen.Sokoban) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("🧩", "SLIDING PUZZLE", "Slide tiles into order",
+                "Arrange numbered tiles by sliding into the empty gap. 3×3 to 5×5. Spring-animated.",
+                Color(0xFF34D399),
+                if (ui.slidingWins > 0) "${ui.slidingWins} puzzles solved" else "Classic 15-puzzle",
+            ) { hub.navigate(HubScreen.SlidingPuzzle) }
+            Spacer(Modifier.height(12.dp))
+            GameCard("💣", "MINESWEEPER", "Clear the hex minefield",
+                "Tap to reveal, long-press to flag. Safe-first-tap guarantee. Hexagonal grid. 4 difficulties.",
+                Color(0xFFE94560),
+                if (ui.mineWins > 0) "${ui.mineWins} boards cleared" else "Don't hit a mine!",
+            ) { hub.navigate(HubScreen.Minesweeper) }
+
+            Spacer(Modifier.height(20.dp))
+
+            // Bottom nav
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(
-                    onClick = { hub.navigate(HubScreen.AchievementsScreen) },
-                    border  = BorderStroke(1.dp, t.warning.copy(.4f)),
-                    colors  = ButtonDefaults.outlinedButtonColors(contentColor = t.warning),
-                    modifier = Modifier.weight(1f)
+                    onClick  = { hub.navigate(HubScreen.AchievementsScreen) },
+                    border   = BorderStroke(1.dp, t.warning.copy(.4f)),
+                    colors   = ButtonDefaults.outlinedButtonColors(contentColor = t.warning),
+                    modifier = Modifier.weight(1f),
                 ) {
                     Text("🏆", fontSize = 14.sp)
                     Spacer(Modifier.width(6.dp))
-                    Text("${ui.unlockedIds.size} / ${com.enigma.littlegames.domain.Achievements.total}",
+                    Text("${ui.unlockedIds.size} / 41",
                         fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
                 OutlinedButton(
-                    onClick = { hub.navigate(HubScreen.Settings) },
-                    border  = BorderStroke(1.dp, t.border),
-                    colors  = ButtonDefaults.outlinedButtonColors(contentColor = t.textSecondary),
-                    modifier = Modifier.weight(1f)
+                    onClick  = { hub.navigate(HubScreen.Settings) },
+                    border   = BorderStroke(1.dp, t.border),
+                    colors   = ButtonDefaults.outlinedButtonColors(contentColor = t.textSecondary),
+                    modifier = Modifier.weight(1f),
                 ) {
                     Icon(Icons.Default.Settings, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Settings", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
-
             Spacer(Modifier.height(24.dp))
         }
 
@@ -193,22 +200,19 @@ fun HomeScreen(hub: HubViewModel) {
         AchievementToast(
             achievement = newAch.newAchievement,
             onDismiss   = hub::dismissAchievement,
-            modifier    = Modifier.align(Alignment.TopCenter).statusBarsPadding()
+            modifier    = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
         )
     }
 }
 
 @Composable
-private fun SectionHeader(title: String, t: GameTheme) {
-    Row(
-        Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        HorizontalDivider(Modifier.weight(1f), color = t.border, thickness = 0.5.dp)
-        Text(title, color = t.textSecondary, fontSize = 10.sp,
-            letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
-        HorizontalDivider(Modifier.weight(1f), color = t.border, thickness = 0.5.dp)
+private fun SectionDivider(label: String, color: Color) {
+    val t = LocalGameTheme.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f).height(1.dp).background(color.copy(.3f)))
+        Text("  $label  ", color = color.copy(.7f), fontSize = 9.sp,
+            letterSpacing = 3.sp, fontWeight = FontWeight.Bold)
+        Box(Modifier.weight(1f).height(1.dp).background(color.copy(.3f)))
     }
 }
 
@@ -225,36 +229,25 @@ private fun GameCard(
 
     Box(
         Modifier.fillMaxWidth().scale(scale).clip(RoundedCornerShape(16.dp))
-            .background(t.surface)
-            .border(1.dp, t.border, RoundedCornerShape(16.dp))
-            .clickable(interactionSource, null, onClick = onClick)
-            .padding(18.dp)
+            .background(t.surface).border(1.dp, t.border, RoundedCornerShape(16.dp))
+            .clickable(interactionSource, null, onClick = onClick).padding(20.dp)
     ) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Accent badge
-                Box(
-                    Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
-                        .background(accentColor.copy(.15f))
-                        .border(1.dp, accentColor.copy(.3f), RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center
-                ) { Text(emoji, fontSize = 26.sp) }
-
+                Text(emoji, fontSize = 32.sp)
                 Spacer(Modifier.width(14.dp))
-
-                Column(Modifier.weight(1f)) {
-                    Text(title, color = accentColor, fontSize = 15.sp,
-                        fontWeight = FontWeight.Black, letterSpacing = 1.5.sp)
-                    Text(subtitle, color = t.textSecondary, fontSize = 11.sp)
+                Column {
+                    Text(title, color = accentColor, fontSize = 16.sp,
+                        fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                    Text(subtitle, color = t.textSecondary, fontSize = 12.sp)
                 }
+                Spacer(Modifier.weight(1f))
                 Icon(Icons.Default.ChevronRight, null, tint = t.textSecondary)
             }
-
+            Spacer(Modifier.height(12.dp))
+            Text(description, color = t.textSecondary, fontSize = 12.sp, lineHeight = 18.sp)
             Spacer(Modifier.height(10.dp))
-            Text(description, color = t.textSecondary, fontSize = 11.sp, lineHeight = 17.sp)
-            Spacer(Modifier.height(10.dp))
-
-            Surface(color = accentColor.copy(alpha = 0.12f), shape = RoundedCornerShape(6.dp)) {
+            Surface(color = accentColor.copy(.12f), shape = RoundedCornerShape(6.dp)) {
                 Text(stat, color = accentColor, fontSize = 11.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
             }

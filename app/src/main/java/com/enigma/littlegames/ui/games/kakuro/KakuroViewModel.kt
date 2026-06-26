@@ -2,14 +2,26 @@ package com.enigma.littlegames.ui.games.kakuro
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kakuro — ViewModel
-// Crossword-style grid where each run of white cells must sum to its clue
-// with no repeated digits 1–9.
 //
-// Generation strategy:
-//   1. Start from a hardcoded crossword-shaped layout (black/white mask)
-//   2. Solve the board using backtracking with constraint propagation
-//   3. Compute clues from the solved board
-//   4. Keep pre-built layouts for Easy/Medium; procedural for Hard/Expert
+// Difficulty now drives actual grid size:
+//   Easy   →  7×7  (small, approachable)
+//   Medium →  9×9  (standard)
+//   Hard   → 11×11 (large)
+//   Expert → 13×13 (very large)
+//
+// Clue-cell convention (standard Kakuro):
+//   The diagonal runs TOP-LEFT → BOTTOM-RIGHT.
+//
+//   • RIGHT (across) clue — applies to the horizontal run starting to the
+//     right of this cell.  Sits in the TOP-RIGHT triangle.
+//     The clue cell is the BLACK cell immediately to the LEFT of that run.
+//
+//   • DOWN clue — applies to the vertical run starting below this cell.
+//     Sits in the BOTTOM-LEFT triangle.
+//     The clue cell is the BLACK cell immediately ABOVE that run.
+//
+//   In the data model we keep field names `down` and `right` as before;
+//   only the rendering positions change (handled in KakuroScreen).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.lifecycle.ViewModel
@@ -43,10 +55,10 @@ enum class KakuroDifficulty(val label: String, val emoji: String, val gridKey: S
 }
 
 data class KakuroState(
-    val size: Int                          = 7,
-    val cells: Array<Array<KakuroCell>>    = Array(7) { Array(7) { KakuroCell.Clue() } },
+    val size: Int                          = 9,
+    val cells: Array<Array<KakuroCell>>    = Array(9) { Array(9) { KakuroCell.Clue() } },
     val runs: List<KakuroRun>              = emptyList(),
-    val solution: Array<IntArray>          = Array(7) { IntArray(7) },   // 0 for non-white
+    val solution: Array<IntArray>          = Array(9) { IntArray(9) },   // 0 for non-white
     val selected: Pair<Int, Int>?          = null,
     val errors: Set<Pair<Int, Int>>        = emptySet(),
     val isComplete: Boolean                = false,
@@ -57,53 +69,74 @@ data class KakuroState(
 )
 
 // ── Hardcoded layouts (white-cell masks) ──────────────────────────────────────
-// 'W' = white (player fills in), 'B' = black/clue cell
-// Layouts are padded with black border cells.
+// 'W' = white (player fills in), 'B' = black/clue cell.
+//
+// Grid sizes by difficulty:
+//   Easy   =  7×7
+//   Medium =  9×9
+//   Hard   = 11×11
+//   Expert = 13×13
+//
+// Layout rules:
+//   • Every white cell must belong to exactly one horizontal run AND one
+//     vertical run, each of length ≥ 2.
+//   • Black border rows/cols ensure every run has a valid clue cell to its
+//     left (horizontal) or above (vertical).
 
+// ── Easy 7×7 ─────────────────────────────────────────────────────────────────
 private val EASY_LAYOUT = arrayOf(
-    "BBBBB",
-    "BBWWW",
-    "BWWWB",
-    "BWWWB",
-    "BWWWB",
-    "BWWBB",
-    "BBBBB",
-)
-
-private val MEDIUM_LAYOUT = arrayOf(
     "BBBBBBB",
-    "BBWWBWW",
-    "BWWWWWB",
-    "BWBWWWB",
-    "BWWWBWW",
+    "BBBWWWB",
     "BBWWWBB",
+    "BWWWWWB",
+    "BBWWWBB",
+    "BWWWBBB",
     "BBBBBBB",
 )
 
-private val HARD_LAYOUT = arrayOf(
+// ── Medium 9×9 ───────────────────────────────────────────────────────────────
+private val MEDIUM_LAYOUT = arrayOf(
     "BBBBBBBBB",
-    "BBWWBWWBB",
+    "BBBWWBWWB",
+    "BBWWWWWBB",
+    "BWWBWWBWB",
     "BWWWWWWWB",
-    "BWBWWWBWB",
-    "BWWWBWWWB",
-    "BWBWWWBWB",
-    "BWWWWWWWB",
-    "BBWWBWWBB",
+    "BWBWWBWWB",
+    "BBWWWWWBB",
+    "BWWBWWBBB",
     "BBBBBBBBB",
 )
 
-private val EXPERT_LAYOUT = arrayOf(
+// ── Hard 11×11 ───────────────────────────────────────────────────────────────
+private val HARD_LAYOUT = arrayOf(
     "BBBBBBBBBBB",
-    "BBWWWBWWWBB",
-    "BWWWWWWWWWB",
-    "BWBBWWWBBWB",
+    "BBBWWWBWWBB",
+    "BBWWWWWWWBB",
+    "BWWBWWWBWWB",
     "BWWWWBWWWWB",
     "BBWWWWWWWBB",
     "BWWWWBWWWWB",
-    "BWBBWWWBBWB",
-    "BWWWWWWWWWB",
-    "BBWWWBWWWBB",
+    "BWWBWWWBWWB",
+    "BBWWWWWWWBB",
+    "BBBWWWBWWBB",
     "BBBBBBBBBBB",
+)
+
+// ── Expert 13×13 ─────────────────────────────────────────────────────────────
+private val EXPERT_LAYOUT = arrayOf(
+    "BBBBBBBBBBBBB",
+    "BBBWWWBWWWBBB",
+    "BBWWWWWWWWWBB",
+    "BWWBWWWWWBWWB",
+    "BWWWWBWBWWWWB",
+    "BBWWWWWWWWWBB",
+    "BWWBWWWWWBWWB",
+    "BBWWWWWWWWWBB",
+    "BWWWWBWBWWWWB",
+    "BWWBWWWWWBWWB",
+    "BBWWWWWWWWWBB",
+    "BBBWWWBWWWBBB",
+    "BBBBBBBBBBBBB",
 )
 
 private fun layoutFor(d: KakuroDifficulty) = when (d) {
@@ -117,7 +150,7 @@ private fun layoutFor(d: KakuroDifficulty) = when (d) {
 
 /**
  * Build runs from a white-cell mask.
- * At this stage runs have sum = 0; they're filled in after solving.
+ * Runs with fewer than 2 white cells are excluded (no valid Kakuro run).
  */
 private fun buildRunsFromLayout(mask: Array<String>): List<KakuroRun> {
     val rows = mask.size; val cols = mask[0].length
@@ -128,11 +161,11 @@ private fun buildRunsFromLayout(mask: Array<String>): List<KakuroRun> {
         var c = 0
         while (c < cols) {
             if (mask[r][c] == 'W') {
-                val start = c
-                val cells = mutableListOf<Pair<Int,Int>>()
+                val cells = mutableListOf<Pair<Int, Int>>()
                 while (c < cols && mask[r][c] == 'W') { cells.add(r to c); c++ }
                 if (cells.size >= 2) {
-                    runs.add(KakuroRun(cells, r, start - 1, true, 0))
+                    // clue cell is the black cell immediately to the left of the run
+                    runs.add(KakuroRun(cells, r, cells.first().second - 1, true, 0))
                 }
             } else c++
         }
@@ -143,11 +176,11 @@ private fun buildRunsFromLayout(mask: Array<String>): List<KakuroRun> {
         var r = 0
         while (r < rows) {
             if (mask[r][c] == 'W') {
-                val start = r
-                val cells = mutableListOf<Pair<Int,Int>>()
+                val cells = mutableListOf<Pair<Int, Int>>()
                 while (r < rows && mask[r][c] == 'W') { cells.add(r to c); r++ }
                 if (cells.size >= 2) {
-                    runs.add(KakuroRun(cells, start - 1, c, false, 0))
+                    // clue cell is the black cell immediately above the run
+                    runs.add(KakuroRun(cells, cells.first().first - 1, c, false, 0))
                 }
             } else r++
         }
@@ -156,35 +189,31 @@ private fun buildRunsFromLayout(mask: Array<String>): List<KakuroRun> {
 }
 
 /**
- * Solve a Kakuro board given its runs (with sum = 0, i.e. we fill the board
- * first then derive sums).  Returns a filled IntArray board or null.
- *
- * Strategy: place digits 1–9 without repeating within a run, using
- * backtracking with forward checking.
+ * Solve a Kakuro board: place digits 1–9, no repeats within a run,
+ * using backtracking. Returns true on success.
  */
 private fun solveBoard(
     rows: Int, cols: Int,
     runs: List<KakuroRun>,
     grid: Array<IntArray> = Array(rows) { IntArray(cols) },
     pos: Int = 0,
+    whiteCells: List<Pair<Int, Int>> = runs.flatMap { it.cells }.distinct()
+        .sortedWith(compareBy({ it.first }, { it.second })),
 ): Boolean {
-    // Collect all white cells in a stable order
-    val whiteCells = runs.flatMap { it.cells }.distinct().sortedWith(compareBy({ it.first }, { it.second }))
     if (pos >= whiteCells.size) return true
-
     val (r, c) = whiteCells[pos]
-    if (grid[r][c] != 0) return solveBoard(rows, cols, runs, grid, pos + 1)
+    if (grid[r][c] != 0) return solveBoard(rows, cols, runs, grid, pos + 1, whiteCells)
 
-    val digitsInRow = runs.filter { it.isHorizontal  && (r to c) in it.cells }
-        .flatMap { run -> run.cells.filter { it != r to c }.map { (pr, pc) -> grid[pr][pc] } }.toSet()
-    val digitsInCol = runs.filter { !it.isHorizontal && (r to c) in it.cells }
-        .flatMap { run -> run.cells.filter { it != r to c }.map { (pr, pc) -> grid[pr][pc] } }.toSet()
-    val forbidden = digitsInRow + digitsInCol
+    val hRun = runs.firstOrNull { it.isHorizontal  && (r to c) in it.cells }
+    val vRun = runs.firstOrNull { !it.isHorizontal && (r to c) in it.cells }
+    val usedH = hRun?.cells?.filter { it != r to c }?.map { (pr, pc) -> grid[pr][pc] }?.toSet() ?: emptySet()
+    val usedV = vRun?.cells?.filter { it != r to c }?.map { (pr, pc) -> grid[pr][pc] }?.toSet() ?: emptySet()
+    val forbidden = usedH + usedV
 
     for (d in (1..9).shuffled()) {
         if (d in forbidden) continue
         grid[r][c] = d
-        if (solveBoard(rows, cols, runs, grid, pos + 1)) return true
+        if (solveBoard(rows, cols, runs, grid, pos + 1, whiteCells)) return true
         grid[r][c] = 0
     }
     return false
@@ -194,7 +223,6 @@ private fun generateKakuro(d: KakuroDifficulty): Triple<Array<Array<KakuroCell>>
     val layout = layoutFor(d)
     val rows = layout.size; val cols = layout[0].length
 
-    // Build blank grid and runs
     val runsNoSum = buildRunsFromLayout(layout)
 
     // Solve to get digit placements
@@ -207,11 +235,14 @@ private fun generateKakuro(d: KakuroDifficulty): Triple<Array<Array<KakuroCell>>
     }
 
     // Build cell array for display
-    // First pass: mark all white cells
+    // Pass 1: mark white cells
     val cells: Array<Array<KakuroCell>> = Array(rows) { r ->
         Array(cols) { c -> if (layout[r][c] == 'W') KakuroCell.White() else KakuroCell.Clue() }
     }
-    // Second pass: assign clues to black cells
+    // Pass 2: assign clues to black cells
+    // Convention:
+    //   Horizontal run  → clue cell is LEFT of run  → RIGHT clue stored in `right` field
+    //   Vertical run    → clue cell is ABOVE run     → DOWN  clue stored in `down`  field
     runs.forEach { run ->
         val cr = run.clueRow; val cc = run.clueCol
         val existing = cells[cr][cc] as? KakuroCell.Clue ?: KakuroCell.Clue()
@@ -236,9 +267,7 @@ fun computeKakuroErrors(
         val filled = values.filter { it > 0 }
         // Duplicate digits in run
         if (filled.size != filled.toSet().size) {
-            run.cells.forEachIndexed { i, cell ->
-                if (values[i] > 0) errors.add(cell)
-            }
+            run.cells.forEachIndexed { i, cell -> if (values[i] > 0) errors.add(cell) }
         }
         // Wrong sum when fully filled
         if (values.none { it == 0 } && values.sum() != run.sum) {
@@ -259,17 +288,28 @@ class KakuroViewModel : ViewModel() {
 
     fun newGame(d: KakuroDifficulty) {
         timerJob?.cancel()
-        _state.update { it.copy(generating = true, difficulty = d, elapsedSecs = 0L, errorCount = 0, isComplete = false, selected = null) }
+        _state.update {
+            it.copy(
+                generating  = true,
+                difficulty  = d,
+                elapsedSecs = 0L,
+                errorCount  = 0,
+                isComplete  = false,
+                selected    = null,
+            )
+        }
         viewModelScope.launch(Dispatchers.Default) {
             val (cells, runs, sol) = generateKakuro(d)
-            _state.update { it.copy(
-                generating = false,
-                size       = cells.size,
-                cells      = cells,
-                runs       = runs,
-                solution   = sol,
-                errors     = emptySet(),
-            )}
+            _state.update {
+                it.copy(
+                    generating = false,
+                    size       = cells.size,
+                    cells      = cells,
+                    runs       = runs,
+                    solution   = sol,
+                    errors     = emptySet(),
+                )
+            }
         }
         timerJob = viewModelScope.launch {
             while (true) {
