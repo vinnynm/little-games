@@ -1,49 +1,42 @@
 package com.enigma.littlegames.ui.games.kakuro
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kakuro Screen
+// KakuroScreen — procedural random Kakuro, hub-themed.
 //
-// Clue-cell rendering — standard Kakuro convention:
+// Key rendering decisions (matching the conventions corrected in earlier sprints):
+//   • Diagonal in clue cell runs TOP-LEFT → BOTTOM-RIGHT
+//   • DOWN clue (applies to the run below):  TOP-RIGHT  triangle, right-aligned
+//   • RIGHT/ACROSS clue (run to the right): BOTTOM-LEFT triangle, left-aligned
+//   • Board uses KakuroColors (light board palette) so clues are readable at
+//     every zoom level regardless of the dark hub theme.
+//   • Outer board border drawn as Canvas overlay so it's never obscured.
 //
-//   The diagonal runs TOP-LEFT → BOTTOM-RIGHT, splitting the black cell into:
+// The clue-cell canvas now uses Compose TextMeasurer (no android.graphics.Paint)
+// for cleaner integration with the Compose rendering pipeline.
 //
-//     ┌──────────────┐
-//     │▓▓▓▓▓▓▓/ rr  │   TOP-RIGHT triangle
-//     │▓▓▓▓▓▓/       │   → RIGHT (across) clue
-//     │▓▓▓▓▓/        │   → applies to the horizontal run to the RIGHT
-//     │▓▓▓▓/         │
-//     │ dd /▓▓▓▓▓▓▓  │   BOTTOM-LEFT triangle
-//     │   /▓▓▓▓▓▓▓▓  │   → DOWN clue
-//     │  /▓▓▓▓▓▓▓▓▓  │   → applies to the vertical run BELOW
-//     └──────────────┘
-//
-//   This matches every commercially published Kakuro puzzle.
-//
-// Grid sizing by difficulty (drives aspect-ratio and cell count):
-//   Easy    7×7  →  comfortable for beginners
-//   Medium  9×9  →  standard Kakuro size
-//   Hard   11×11 →  challenging, more constraints
-//   Expert 13×13 →  dense, expert-level
+// Controls:
+//   • Number pad 1-9
+//   • Notes toggle, Undo, Erase, Hint
+//   • Difficulty tabs (Easy / Medium / Hard / Expert) — generates a new puzzle
+//   • Size picker row (6×6 up to 13×13) — generates a new puzzle
 // ─────────────────────────────────────────────────────────────────────────────
 
-import android.graphics.Paint
-import android.graphics.Typeface
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -52,8 +45,23 @@ import com.enigma.littlegames.domain.Sfx
 import com.enigma.littlegames.domain.rememberParticleSystem
 import com.enigma.littlegames.common.*
 
+// ── Board color palette (light, echoes a printed Kakuro grid) ─────────────────
+private object KakuroColors {
+    val boardBg          = Color(0xFF14131A)
+    val blackCell        = Color(0xFF1F1E27)
+    val divider          = Color(0xFF3A3946)
+    val clueText         = Color(0xFFEFE7D8)
+    val whiteCell        = Color(0xFFFFFDF7)
+    val whiteSel         = Color(0xFFFFE2B0)
+    val whiteRunHi       = Color(0xFFFFF1D6)
+    val whiteConflict    = Color(0xFFFFC2BC)
+    val whiteBorder      = Color(0xFFD9D2C2)
+    val mainDigitText    = Color(0xFF2A2730)
+    val noteDigitText    = Color(0xFF8C8579)
+    val conflictDigit    = Color(0xFFB3261E)
+}
+
 private const val OUTER_BORDER_W = 3.5f
-private const val CELL_LINE_A    = 0.20f
 
 @Composable
 fun KakuroScreen(hub: HubViewModel) {
@@ -63,12 +71,13 @@ fun KakuroScreen(hub: HubViewModel) {
     val particles = rememberParticleSystem()
     var gridCenter by remember { mutableStateOf(Offset(400f, 400f)) }
 
-    LaunchedEffect(state.isComplete) {
-        if (state.isComplete) {
+    // Win → report to hub + particles
+    LaunchedEffect(state.isSolved) {
+        if (state.isSolved) {
             hub.recordSudokuWin(
-                difficulty  = "Kakuro ${state.difficulty.label}",
+                difficulty  = "Kakuro ${state.difficulty.label} ${state.gridSize.label}",
                 errorCount  = state.errorCount,
-                elapsedSecs = state.elapsedSecs,
+                elapsedSecs = state.elapsedSecs.toLong(),
             )
             hub.sound.play(Sfx.VICTORY)
             particles.burst(
@@ -79,188 +88,182 @@ fun KakuroScreen(hub: HubViewModel) {
         }
     }
 
-    LaunchedEffect(state.errorCount) {
-        if (state.errorCount > 0 && !state.isComplete) hub.sound.play(Sfx.SUDOKU_ERROR)
-    }
-
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .background(t.background)
-                .padding(horizontal = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            Modifier.fillMaxSize().systemBarsPadding().background(t.background).padding(horizontal = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             val timer = remember(state.elapsedSecs) {
-                "%02d:%02d".format(state.elapsedSecs / 60, state.elapsedSecs % 60)
+                "%d:%02d".format(state.elapsedSecs / 60, state.elapsedSecs % 60)
             }
 
             GameTopBar(
                 title    = "KAKURO",
-                subtitle = "${state.difficulty.emoji} ${state.difficulty.label}  ·  ${state.size}×${state.size}",
+                subtitle = "${state.difficulty.emoji} ${state.difficulty.label} · ${state.gridSize.label}",
                 onBack   = { hub.navigate(HubScreen.Home) },
                 actions  = {
-                    Text(
-                        timer,
-                        color      = t.primary,
-                        fontSize   = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier   = Modifier.padding(end = 8.dp),
-                    )
+                    Text(timer, color = t.primary, fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 6.dp))
+                    IconButton(onClick = { vm.toggleShowMistakes(); hub.sound.play(Sfx.TAP) }) {
+                        Icon(
+                            if (state.showMistakes) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = "Toggle mistakes",
+                            tint = if (state.showMistakes) t.primary else t.textSecondary,
+                        )
+                    }
                 }
             )
 
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                MiniStat("ERRORS", "${state.errorCount}")
-                val whiteFilled = state.cells.sumOf { row ->
-                    row.count { cell -> cell is KakuroCell.White && cell.value != 0 }
-                }
-                val whiteTotal = state.cells.sumOf { row ->
-                    row.count { cell -> cell is KakuroCell.White }
-                }
-                MiniStat("FILLED", "$whiteFilled/$whiteTotal")
-                MiniStat("TIME",   timer)
+            // Stats row
+            Row(Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                MiniStat("ERRORS",  "${state.errorCount}")
+                val whiteFilled = state.puzzle?.allWhiteCells?.count { state.playerDigits.containsKey(it) } ?: 0
+                val whiteTotal  = state.puzzle?.allWhiteCells?.size ?: 0
+                MiniStat("FILLED",  "$whiteFilled/$whiteTotal")
+                MiniStat("HINTS",   "${state.hintsUsed}")
+                MiniStat("TIME",    timer)
             }
 
-            AnimatedVisibility(state.isComplete) {
+            // Win banner
+            AnimatedVisibility(state.isSolved) {
                 Surface(
-                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    Modifier.fillMaxWidth().padding(bottom = 6.dp),
                     color  = t.success.copy(.15f),
                     shape  = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, t.success.copy(.5f))
+                    border = BorderStroke(1.dp, t.success.copy(.5f)),
                 ) {
-                    Row(
-                        Modifier.padding(12.dp),
-                        verticalAlignment     = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center) {
                         Text("🎉  KAKURO SOLVED!", color = t.success, fontWeight = FontWeight.Black, fontSize = 15.sp)
-                        Text("  ·  ${state.errorCount} errors  ·  $timer", color = t.textSecondary, fontSize = 11.sp)
+                        Text("  ·  ${state.hintsUsed} hints  ·  $timer", color = t.textSecondary, fontSize = 11.sp)
                     }
                 }
             }
 
-            // ── Grid ─────────────────────────────────────────────────────────
+            // ── Board ─────────────────────────────────────────────────────────
             if (state.generating) {
                 Box(
                     Modifier.fillMaxWidth().weight(1f),
                     contentAlignment = Alignment.Center,
                 ) { CircularProgressIndicator(color = t.primary) }
             } else {
-                // The grid is always square; we constrain to the minimum of
-                // available width and a reasonable fraction of screen height
-                // so larger grids don't overflow on small screens.
-                BoxWithConstraints(
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .onGloballyPositioned { c ->
-                            gridCenter = Offset(c.size.width / 2f, c.size.height / 2f)
-                        }
-                ) {
-                    val cellSize = maxWidth / state.size
+                val puzzle = state.puzzle
+                if (puzzle != null) {
+                    val textMeasurer = rememberTextMeasurer()
 
-                    Column(Modifier.fillMaxSize()) {
-                        for (row in 0 until state.size) {
-                            Row(Modifier.weight(1f).fillMaxWidth()) {
-                                for (col in 0 until state.size) {
-                                    val cell   = state.cells[row][col]
-                                    val isSel  = state.selected == row to col
-                                    val isErr  = (row to col) in state.errors
-                                    val isHi   = state.selected?.let { (sr, sc) ->
-                                        state.runs.any { run ->
-                                            (sr to sc) in run.cells && (row to col) in run.cells
+                    BoxWithConstraints(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(vertical = 4.dp)
+                            .onGloballyPositioned { c ->
+                                gridCenter = Offset(c.size.width / 2f, c.size.height / 2f)
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        // Cell size: fit the whole board into available space
+                        val cellDp = minOf(
+                            (maxWidth  / puzzle.totalCols).value,
+                            (maxHeight / puzzle.totalRows).value,
+                        ).coerceIn(18f, 52f).dp
+
+                        Column(
+                            Modifier
+                                .wrapContentSize()
+                                .background(KakuroColors.boardBg)
+                                .border(BorderStroke(2.dp, KakuroColors.divider)),
+                        ) {
+                            for (r in 0 until puzzle.totalRows) {
+                                Row {
+                                    for (c in 0 until puzzle.totalCols) {
+                                        val pos = KPos(r, c)
+                                        if (puzzle.black[r][c]) {
+                                            KakuroBlackCell(pos, puzzle, cellDp, textMeasurer)
+                                        } else {
+                                            KakuroWhiteCell(pos, state, vm, cellDp)
                                         }
-                                    } ?: false
-
-                                    KakuroCellView(
-                                        cell, cellSize, isSel, isHi, isErr, t,
-                                        Modifier.weight(1f).fillMaxHeight(),
-                                    ) { vm.select(row, col) }
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            }
 
-                    // Outer border drawn on top of all cells
-                    Canvas(Modifier.fillMaxSize()) {
-                        drawKakuroOuterBorder(size)
+            // ── Number pad ────────────────────────────────────────────────────
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                for (d in 1..9) {
+                    OutlinedButton(
+                        onClick = { hub.sound.play(Sfx.SUDOKU_PLACE); vm.inputDigit(d) },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        border = BorderStroke(1.dp, t.primary.copy(.4f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = t.textPrimary),
+                        shape = RoundedCornerShape(6.dp),
+                    ) { Text("$d", fontWeight = FontWeight.Bold, fontSize = 15.sp) }
+                }
+            }
+
+            // ── Action row ────────────────────────────────────────────────────
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                KakuroAction(Icons.Default.Backspace, "Erase",  enabled = true)          { hub.sound.play(Sfx.TAP); vm.eraseSelected() }
+                KakuroAction(Icons.Default.EditNote,  "Notes",  highlighted = state.notesMode) { hub.sound.play(Sfx.TAP); vm.toggleNotesMode() }
+                KakuroAction(Icons.AutoMirrored.Filled.Undo, "Undo", enabled = state.canUndo) { hub.sound.play(Sfx.TAP); vm.undo() }
+                KakuroAction(Icons.Default.Lightbulb, "Hint",   enabled = !state.isSolved) { hub.sound.play(Sfx.TAP); vm.useHint() }
+                KakuroAction(Icons.Default.RestartAlt,"Reset",  enabled = true)          { hub.sound.play(Sfx.TAP); vm.resetProgress() }
+            }
+
+            // ── Size picker ───────────────────────────────────────────────────
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(t.surface).padding(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                KakuroGridSize.entries.forEach { sz ->
+                    val sel = state.gridSize == sz
+                    Box(
+                        Modifier.weight(1f).clip(RoundedCornerShape(6.dp))
+                            .background(if (sel) t.primary.copy(.25f) else Color.Transparent)
+                            .border(if (sel) 1.dp else 0.dp, if (sel) t.primary else Color.Transparent, RoundedCornerShape(6.dp))
+                            .clickable { hub.sound.play(Sfx.TAP); vm.newGame(sz, state.difficulty) }
+                            .padding(vertical = 5.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(sz.label, color = if (sel) t.primary else t.textSecondary, fontSize = 9.sp,
+                            fontWeight = if (sel) FontWeight.Black else FontWeight.Normal)
                     }
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
-            // ── Controls ─────────────────────────────────────────────────────
+            // ── Difficulty tabs ───────────────────────────────────────────────
             Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment     = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "Fill each run with unique digits\nthat sum to the clue shown.",
-                    color      = t.textSecondary,
-                    fontSize   = 10.sp,
-                    lineHeight = 14.sp,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(
-                        Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(t.surface)
-                            .border(1.dp, t.border, RoundedCornerShape(8.dp))
-                            .clickable { hub.sound.play(Sfx.TAP); vm.erase() },
-                        contentAlignment = Alignment.Center,
-                    ) { Text("⌫", fontSize = 18.sp) }
-                    ThemedButton("Solve", { hub.sound.play(Sfx.TAP); vm.solve() }, outlined = true)
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            // Number pad
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                for (n in 1..9) {
-                    KakuroNumBtn(n, t) { hub.sound.play(Sfx.SUDOKU_PLACE); vm.place(n) }
-                }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            // Difficulty tabs
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(t.surface)
-                    .padding(3.dp),
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(t.surface).padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 KakuroDifficulty.entries.forEach { d ->
                     val sel = state.difficulty == d
                     Box(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(7.dp))
+                        Modifier.weight(1f).clip(RoundedCornerShape(7.dp))
                             .background(if (sel) t.primary else Color.Transparent)
-                            .clickable { hub.sound.play(Sfx.TAP); vm.newGame(d) }
+                            .clickable { hub.sound.play(Sfx.TAP); vm.newGame(state.gridSize, d) }
                             .padding(vertical = 7.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            "${d.emoji} ${d.label.take(3)}",
-                            color      = if (sel) t.background else t.textSecondary,
-                            fontSize   = 10.sp,
-                            fontWeight = if (sel) FontWeight.Black else FontWeight.Normal,
-                        )
+                        Text("${d.emoji} ${d.label.take(3)}",
+                            color = if (sel) t.background else t.textSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = if (sel) FontWeight.Black else FontWeight.Normal)
                     }
                 }
             }
+
             Spacer(Modifier.height(8.dp))
         }
 
@@ -269,165 +272,152 @@ fun KakuroScreen(hub: HubViewModel) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cell composable
+// Black clue cell
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun KakuroCellView(
-    cell: KakuroCell,
+private fun KakuroBlackCell(
+    pos: KPos,
+    puzzle: KakuroPuzzleData,
     size: Dp,
-    isSelected: Boolean,
-    isHighlighted: Boolean,
-    isError: Boolean,
-    t: GameTheme,
-    modifier: Modifier,
-    onClick: () -> Unit,
+    textMeasurer: TextMeasurer,
 ) {
-    when (cell) {
-        is KakuroCell.Clue -> {
-            // Black clue cell — diagonal + clue numbers drawn entirely in Canvas
-            Box(
-                modifier
-                    .background(Color(0xFF080A10))
-                    .border(0.5.dp, t.border.copy(.25f))
-            ) {
-                Canvas(Modifier.fillMaxSize()) {
-                    drawKakuroClueCell(cell.down, cell.right, t.primary)
-                }
-            }
-        }
+    val across = puzzle.acrossClueAt[pos]
+    val down   = puzzle.downClueAt[pos]
+    val clueTextStyle = TextStyle(
+        color      = KakuroColors.clueText,
+        fontSize   = (size.value * 0.26f).sp,
+        fontWeight = FontWeight.Medium,
+    )
 
-        is KakuroCell.White -> {
-            val bg by animateColorAsState(
-                when {
-                    isSelected    -> t.primary.copy(.35f)
-                    isError       -> Color(0xFFE94560).copy(.22f)
-                    isHighlighted -> t.primary.copy(.10f)
-                    else          -> t.surface
-                },
-                tween(100),
-                label = "kk_bg",
+    Canvas(
+        Modifier.size(size).border(BorderStroke(0.5.dp, KakuroColors.divider))
+    ) {
+        drawRect(color = KakuroColors.blackCell)
+
+        // Diagonal only when both clues are present
+        if (across != null && down != null) {
+            drawLine(
+                color       = KakuroColors.divider,
+                start       = Offset(0f, this.size.height),
+                end         = Offset(this.size.width, 0f),
+                strokeWidth = 1.dp.toPx(),
             )
-            Box(
-                modifier
-                    .background(bg)
-                    .border(0.5.dp, Color.White.copy(CELL_LINE_A))
-                    .clickable(onClick = onClick),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (cell.value != 0) {
-                    Text(
-                        "${cell.value}",
-                        color = when {
-                            isError -> Color(0xFFE94560)
-                            else    -> if (isSelected) t.primary else t.textPrimary
-                        },
-                        fontSize   = (size.value * 0.38f).sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-            }
+        }
+
+        val pad = this.size.width * 0.08f
+
+        // ── ACROSS clue — TOP-RIGHT triangle ─────────────────────────────────
+        // (The run goes to the right, so the clue sits in the upper-right half.)
+        if (across != null) {
+            val layout = textMeasurer.measure("$across", clueTextStyle)
+            drawText(layout, topLeft = Offset(this.size.width - layout.size.width - pad, pad))
+        }
+
+        // ── DOWN clue — BOTTOM-LEFT triangle ─────────────────────────────────
+        // (The run goes downward, so the clue sits in the lower-left half.)
+        if (down != null) {
+            val layout = textMeasurer.measure("$down", clueTextStyle)
+            drawText(layout, topLeft = Offset(pad, this.size.height - layout.size.height - pad))
         }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kakuro clue cell drawing — STANDARD CONVENTION
-//
-//  Diagonal: top-left → bottom-right
-//
-//  TOP-RIGHT triangle  →  RIGHT (across) clue  →  field: `right`
-//    • This cell is to the LEFT of a horizontal run.
-//    • Text: right-aligned, upper half of cell.
-//
-//  BOTTOM-LEFT triangle  →  DOWN clue  →  field: `down`
-//    • This cell is ABOVE a vertical run.
-//    • Text: left-aligned, lower half of cell.
-//
-//  Example (cell has both clues, down=14, right=7):
-//
-//    ┌──────────┐
-//    │        7 │   ← right/across clue, top-right
-//    │       /  │
-//    │      /   │
-//    │     /    │
-//    │ 14 /     │   ← down clue, bottom-left
-//    └──────────┘
-// ─────────────────────────────────────────────────────────────────────────────
-
-private fun DrawScope.drawKakuroClueCell(down: Int?, right: Int?, primary: Color) {
-    val w = size.width
-    val h = size.height
-
-    // Diagonal: top-left → bottom-right
-    drawLine(
-        color       = Color.White.copy(alpha = 0.30f),
-        start       = Offset(2f, 2f),
-        end         = Offset(w - 2f, h - 2f),
-        strokeWidth = 1.0f,
-    )
-
-    val canvas   = drawContext.canvas.nativeCanvas
-    val textSize = h * 0.29f
-    val margin   = h * 0.07f
-
-    // ── RIGHT (across) clue — TOP-RIGHT triangle ──────────────────────────────
-    // Text sits in the upper-right half.
-    // Right-aligned near the right edge, baseline at ~38% of cell height.
-    if (right != null) {
-        val paint = Paint().apply {
-            color       = primary.copy(alpha = 0.95f).toArgb()
-            this.textSize = textSize
-            textAlign   = Paint.Align.RIGHT
-            isAntiAlias = true
-            typeface    = Typeface.DEFAULT_BOLD
-        }
-        canvas.drawText("$right", w - margin, h * 0.38f, paint)
-    }
-
-    // ── DOWN clue — BOTTOM-LEFT triangle ─────────────────────────────────────
-    // Text sits in the lower-left half.
-    // Left-aligned near the left edge, baseline at ~88% of cell height.
-    if (down != null) {
-        val paint = Paint().apply {
-            color       = primary.copy(alpha = 0.95f).toArgb()
-            this.textSize = textSize
-            textAlign   = Paint.Align.LEFT
-            isAntiAlias = true
-            typeface    = Typeface.DEFAULT_BOLD
-        }
-        canvas.drawText("$down", margin, h * 0.88f, paint)
-    }
-}
-
-/** Thick outer board border drawn on top of all cells. */
-private fun DrawScope.drawKakuroOuterBorder(canvasSize: Size) {
-    val half  = OUTER_BORDER_W / 2f
-    val color = Color.White.copy(alpha = 0.75f)
-    val rect  = Rect(half, half, canvasSize.width - half, canvasSize.height - half)
-    drawRect(
-        color,
-        topLeft = rect.topLeft,
-        size    = rect.size,
-        style   = Stroke(width = OUTER_BORDER_W),
-    )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Number pad button
+// White playable cell
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun KakuroNumBtn(n: Int, t: GameTheme, onClick: () -> Unit) {
+private fun KakuroWhiteCell(
+    pos: KPos,
+    state: KakuroUiState,
+    vm: KakuroViewModel,
+    size: Dp,
+) {
+    val puzzle    = state.puzzle ?: return
+    val digit     = state.playerDigits[pos]
+    val cellNotes = state.notes[pos] ?: emptySet()
+    val isSel     = state.selectedCell == pos
+    val isInRun   = !isSel && state.selectedCell?.let { sel ->
+        puzzle.acrossRunAt[pos] == puzzle.acrossRunAt[sel] ||
+        puzzle.downRunAt[pos]   == puzzle.downRunAt[sel]
+    } == true
+    val conflict  = digit != null && vm.cellHasConflict(puzzle, state.playerDigits, state.showMistakes, pos)
+
+    val bg by animateColorAsState(
+        when {
+            isSel    -> KakuroColors.whiteSel
+            conflict -> KakuroColors.whiteConflict
+            isInRun  -> KakuroColors.whiteRunHi
+            else     -> KakuroColors.whiteCell
+        }, tween(80), label = "kk_bg"
+    )
+
     Box(
-        Modifier
-            .size(34.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(t.surfaceVariant)
-            .border(1.dp, t.primary.copy(.25f), RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
+        Modifier.size(size)
+            .border(BorderStroke(0.5.dp, KakuroColors.whiteBorder))
+            .background(bg)
+            .clickable { vm.selectCell(pos) },
         contentAlignment = Alignment.Center,
     ) {
-        Text("$n", color = t.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        if (digit != null) {
+            Text(
+                text       = "$digit",
+                fontSize   = (size.value * 0.50f).sp,
+                fontWeight = FontWeight.SemiBold,
+                color      = if (conflict) KakuroColors.conflictDigit else KakuroColors.mainDigitText,
+            )
+        } else if (cellNotes.isNotEmpty()) {
+            KakuroNotesGrid(cellNotes, size)
+        }
+    }
+}
+
+@Composable
+private fun KakuroNotesGrid(notes: Set<Int>, cellSize: Dp) {
+    val fontSize = (cellSize.value * 0.22f).sp
+    Column(
+        Modifier.fillMaxSize().padding(1.dp),
+        verticalArrangement = Arrangement.SpaceEvenly,
+    ) {
+        for (row in 0..2) {
+            Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.SpaceEvenly) {
+                for (col in 0..2) {
+                    val d = row * 3 + col + 1
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        if (d in notes) Text("$d", fontSize = fontSize, color = KakuroColors.noteDigitText)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action button
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun KakuroAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    enabled: Boolean = true,
+    highlighted: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val t = LocalGameTheme.current
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        IconButton(onClick = onClick, enabled = enabled) {
+            Icon(
+                icon,
+                contentDescription = label,
+                tint = when {
+                    !enabled   -> t.textSecondary.copy(.4f)
+                    highlighted -> t.primary
+                    else       -> t.textPrimary
+                },
+            )
+        }
+        Text(label, color = t.textSecondary, fontSize = 9.sp)
     }
 }

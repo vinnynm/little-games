@@ -1,361 +1,244 @@
 package com.enigma.littlegames.ui.games.kakuro
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kakuro — ViewModel
+// KakuroViewModel — procedural random Kakuro, integrated with Enigma Game Hub.
 //
-// Difficulty now drives actual grid size:
-//   Easy   →  7×7  (small, approachable)
-//   Medium →  9×9  (standard)
-//   Hard   → 11×11 (large)
-//   Expert → 13×13 (very large)
-//
-// Clue-cell convention (standard Kakuro):
-//   The diagonal runs TOP-LEFT → BOTTOM-RIGHT.
-//
-//   • RIGHT (across) clue — applies to the horizontal run starting to the
-//     right of this cell.  Sits in the TOP-RIGHT triangle.
-//     The clue cell is the BLACK cell immediately to the LEFT of that run.
-//
-//   • DOWN clue — applies to the vertical run starting below this cell.
-//     Sits in the BOTTOM-LEFT triangle.
-//     The clue cell is the BLACK cell immediately ABOVE that run.
-//
-//   In the data model we keep field names `down` and `right` as before;
-//   only the rendering positions change (handled in KakuroScreen).
+// Changes from the standalone app:
+//   • Uses KakuroGridSize / KakuroDifficulty (hub-package enums)
+//   • State is now a single StateFlow<KakuroUiState> (hub pattern)
+//   • Generation runs on Dispatchers.Default via viewModelScope
+//   • Win-check validates clues, not the stored solution, so alternate
+//     valid completions are accepted
+//   • Hint/reveal reads from KakuroPuzzleData.solution
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlin.random.Random
 
-// ── Cell model ────────────────────────────────────────────────────────────────
-
-sealed class KakuroCell {
-    /** A clue cell (black square with optional down/right clue numbers) */
-    data class Clue(val down: Int? = null, val right: Int? = null) : KakuroCell()
-    /** A white cell the player fills in */
-    data class White(val value: Int = 0, val notes: Set<Int> = emptySet()) : KakuroCell()
-}
-
-/** A "run" — a horizontal or vertical sequence of white cells with a target sum */
-data class KakuroRun(
-    val cells: List<Pair<Int, Int>>,  // (row, col) of each white cell in the run
-    val clueRow: Int,                 // row of the clue cell
-    val clueCol: Int,                 // col of the clue cell
-    val isHorizontal: Boolean,
-    val sum: Int,
+/** One undo-able edit. */
+private data class UndoEntry(
+    val cell: KPos,
+    val previousDigit: Int?,
+    val previousNotes: Set<Int>,
 )
 
-enum class KakuroDifficulty(val label: String, val emoji: String, val gridKey: String) {
-    EASY  ("Easy",   "🌿", "easy"),
-    MEDIUM("Medium", "⚡", "medium"),
-    HARD  ("Hard",   "🔥", "hard"),
-    EXPERT("Expert", "💀", "expert"),
-}
-
-data class KakuroState(
-    val size: Int                          = 9,
-    val cells: Array<Array<KakuroCell>>    = Array(9) { Array(9) { KakuroCell.Clue() } },
-    val runs: List<KakuroRun>              = emptyList(),
-    val solution: Array<IntArray>          = Array(9) { IntArray(9) },   // 0 for non-white
-    val selected: Pair<Int, Int>?          = null,
-    val errors: Set<Pair<Int, Int>>        = emptySet(),
-    val isComplete: Boolean                = false,
-    val difficulty: KakuroDifficulty       = KakuroDifficulty.MEDIUM,
-    val elapsedSecs: Long                  = 0L,
-    val errorCount: Int                    = 0,
-    val generating: Boolean                = true,
+data class KakuroUiState(
+    val puzzle: KakuroPuzzleData?              = null,
+    val playerDigits: Map<KPos, Int>           = emptyMap(),
+    val notes: Map<KPos, Set<Int>>             = emptyMap(),
+    val selectedCell: KPos?                    = null,
+    val notesMode: Boolean                     = false,
+    val showMistakes: Boolean                  = true,
+    val elapsedSecs: Int                       = 0,
+    val hintsUsed: Int                         = 0,
+    val isSolved: Boolean                      = false,
+    val generating: Boolean                    = true,
+    val gridSize: KakuroGridSize               = KakuroGridSize.SMALL,
+    val difficulty: KakuroDifficulty           = KakuroDifficulty.MEDIUM,
+    val canUndo: Boolean                       = false,
+    val errorCount: Int                        = 0,
 )
-
-// ── Hardcoded layouts (white-cell masks) ──────────────────────────────────────
-// 'W' = white (player fills in), 'B' = black/clue cell.
-//
-// Grid sizes by difficulty:
-//   Easy   =  7×7
-//   Medium =  9×9
-//   Hard   = 11×11
-//   Expert = 13×13
-//
-// Layout rules:
-//   • Every white cell must belong to exactly one horizontal run AND one
-//     vertical run, each of length ≥ 2.
-//   • Black border rows/cols ensure every run has a valid clue cell to its
-//     left (horizontal) or above (vertical).
-
-// ── Easy 7×7 ─────────────────────────────────────────────────────────────────
-private val EASY_LAYOUT = arrayOf(
-    "BBBBBBB",
-    "BBBWWWB",
-    "BBWWWBB",
-    "BWWWWWB",
-    "BBWWWBB",
-    "BWWWBBB",
-    "BBBBBBB",
-)
-
-// ── Medium 9×9 ───────────────────────────────────────────────────────────────
-private val MEDIUM_LAYOUT = arrayOf(
-    "BBBBBBBBB",
-    "BBBWWBWWB",
-    "BBWWWWWBB",
-    "BWWBWWBWB",
-    "BWWWWWWWB",
-    "BWBWWBWWB",
-    "BBWWWWWBB",
-    "BWWBWWBBB",
-    "BBBBBBBBB",
-)
-
-// ── Hard 11×11 ───────────────────────────────────────────────────────────────
-private val HARD_LAYOUT = arrayOf(
-    "BBBBBBBBBBB",
-    "BBBWWWBWWBB",
-    "BBWWWWWWWBB",
-    "BWWBWWWBWWB",
-    "BWWWWBWWWWB",
-    "BBWWWWWWWBB",
-    "BWWWWBWWWWB",
-    "BWWBWWWBWWB",
-    "BBWWWWWWWBB",
-    "BBBWWWBWWBB",
-    "BBBBBBBBBBB",
-)
-
-// ── Expert 13×13 ─────────────────────────────────────────────────────────────
-private val EXPERT_LAYOUT = arrayOf(
-    "BBBBBBBBBBBBB",
-    "BBBWWWBWWWBBB",
-    "BBWWWWWWWWWBB",
-    "BWWBWWWWWBWWB",
-    "BWWWWBWBWWWWB",
-    "BBWWWWWWWWWBB",
-    "BWWBWWWWWBWWB",
-    "BBWWWWWWWWWBB",
-    "BWWWWBWBWWWWB",
-    "BWWBWWWWWBWWB",
-    "BBWWWWWWWWWBB",
-    "BBBWWWBWWWBBB",
-    "BBBBBBBBBBBBB",
-)
-
-private fun layoutFor(d: KakuroDifficulty) = when (d) {
-    KakuroDifficulty.EASY   -> EASY_LAYOUT
-    KakuroDifficulty.MEDIUM -> MEDIUM_LAYOUT
-    KakuroDifficulty.HARD   -> HARD_LAYOUT
-    KakuroDifficulty.EXPERT -> EXPERT_LAYOUT
-}
-
-// ── Solver / generator ────────────────────────────────────────────────────────
-
-/**
- * Build runs from a white-cell mask.
- * Runs with fewer than 2 white cells are excluded (no valid Kakuro run).
- */
-private fun buildRunsFromLayout(mask: Array<String>): List<KakuroRun> {
-    val rows = mask.size; val cols = mask[0].length
-    val runs = mutableListOf<KakuroRun>()
-
-    // Horizontal runs
-    for (r in 0 until rows) {
-        var c = 0
-        while (c < cols) {
-            if (mask[r][c] == 'W') {
-                val cells = mutableListOf<Pair<Int, Int>>()
-                while (c < cols && mask[r][c] == 'W') { cells.add(r to c); c++ }
-                if (cells.size >= 2) {
-                    // clue cell is the black cell immediately to the left of the run
-                    runs.add(KakuroRun(cells, r, cells.first().second - 1, true, 0))
-                }
-            } else c++
-        }
-    }
-
-    // Vertical runs
-    for (c in 0 until cols) {
-        var r = 0
-        while (r < rows) {
-            if (mask[r][c] == 'W') {
-                val cells = mutableListOf<Pair<Int, Int>>()
-                while (r < rows && mask[r][c] == 'W') { cells.add(r to c); r++ }
-                if (cells.size >= 2) {
-                    // clue cell is the black cell immediately above the run
-                    runs.add(KakuroRun(cells, cells.first().first - 1, c, false, 0))
-                }
-            } else r++
-        }
-    }
-    return runs
-}
-
-/**
- * Solve a Kakuro board: place digits 1–9, no repeats within a run,
- * using backtracking. Returns true on success.
- */
-private fun solveBoard(
-    rows: Int, cols: Int,
-    runs: List<KakuroRun>,
-    grid: Array<IntArray> = Array(rows) { IntArray(cols) },
-    pos: Int = 0,
-    whiteCells: List<Pair<Int, Int>> = runs.flatMap { it.cells }.distinct()
-        .sortedWith(compareBy({ it.first }, { it.second })),
-): Boolean {
-    if (pos >= whiteCells.size) return true
-    val (r, c) = whiteCells[pos]
-    if (grid[r][c] != 0) return solveBoard(rows, cols, runs, grid, pos + 1, whiteCells)
-
-    val hRun = runs.firstOrNull { it.isHorizontal  && (r to c) in it.cells }
-    val vRun = runs.firstOrNull { !it.isHorizontal && (r to c) in it.cells }
-    val usedH = hRun?.cells?.filter { it != r to c }?.map { (pr, pc) -> grid[pr][pc] }?.toSet() ?: emptySet()
-    val usedV = vRun?.cells?.filter { it != r to c }?.map { (pr, pc) -> grid[pr][pc] }?.toSet() ?: emptySet()
-    val forbidden = usedH + usedV
-
-    for (d in (1..9).shuffled()) {
-        if (d in forbidden) continue
-        grid[r][c] = d
-        if (solveBoard(rows, cols, runs, grid, pos + 1, whiteCells)) return true
-        grid[r][c] = 0
-    }
-    return false
-}
-
-private fun generateKakuro(d: KakuroDifficulty): Triple<Array<Array<KakuroCell>>, List<KakuroRun>, Array<IntArray>> {
-    val layout = layoutFor(d)
-    val rows = layout.size; val cols = layout[0].length
-
-    val runsNoSum = buildRunsFromLayout(layout)
-
-    // Solve to get digit placements
-    val grid = Array(rows) { IntArray(cols) }
-    solveBoard(rows, cols, runsNoSum, grid)
-
-    // Compute actual sums
-    val runs = runsNoSum.map { run ->
-        run.copy(sum = run.cells.sumOf { (r, c) -> grid[r][c] })
-    }
-
-    // Build cell array for display
-    // Pass 1: mark white cells
-    val cells: Array<Array<KakuroCell>> = Array(rows) { r ->
-        Array(cols) { c -> if (layout[r][c] == 'W') KakuroCell.White() else KakuroCell.Clue() }
-    }
-    // Pass 2: assign clues to black cells
-    // Convention:
-    //   Horizontal run  → clue cell is LEFT of run  → RIGHT clue stored in `right` field
-    //   Vertical run    → clue cell is ABOVE run     → DOWN  clue stored in `down`  field
-    runs.forEach { run ->
-        val cr = run.clueRow; val cc = run.clueCol
-        val existing = cells[cr][cc] as? KakuroCell.Clue ?: KakuroCell.Clue()
-        cells[cr][cc] = if (run.isHorizontal)
-            existing.copy(right = run.sum)
-        else
-            existing.copy(down = run.sum)
-    }
-
-    return Triple(cells, runs, grid)
-}
-
-// ── Error computation ─────────────────────────────────────────────────────────
-
-fun computeKakuroErrors(
-    cells: Array<Array<KakuroCell>>,
-    runs: List<KakuroRun>,
-): Set<Pair<Int, Int>> {
-    val errors = mutableSetOf<Pair<Int, Int>>()
-    for (run in runs) {
-        val values = run.cells.map { (r, c) -> (cells[r][c] as? KakuroCell.White)?.value ?: 0 }
-        val filled = values.filter { it > 0 }
-        // Duplicate digits in run
-        if (filled.size != filled.toSet().size) {
-            run.cells.forEachIndexed { i, cell -> if (values[i] > 0) errors.add(cell) }
-        }
-        // Wrong sum when fully filled
-        if (values.none { it == 0 } && values.sum() != run.sum) {
-            run.cells.forEach { errors.add(it) }
-        }
-    }
-    return errors
-}
-
-// ── ViewModel ─────────────────────────────────────────────────────────────────
 
 class KakuroViewModel : ViewModel() {
-    private val _state = MutableStateFlow(KakuroState())
-    val state: StateFlow<KakuroState> = _state.asStateFlow()
+
+    private val _state = MutableStateFlow(KakuroUiState())
+    val state: StateFlow<KakuroUiState> = _state.asStateFlow()
+
+    private val undoStack = mutableListOf<UndoEntry>()
     private var timerJob: Job? = null
 
-    init { newGame(KakuroDifficulty.MEDIUM) }
+    init { newGame(KakuroGridSize.SMALL, KakuroDifficulty.MEDIUM) }
 
-    fun newGame(d: KakuroDifficulty) {
+    // ── Game lifecycle ────────────────────────────────────────────────────────
+
+    fun newGame(size: KakuroGridSize = _state.value.gridSize, diff: KakuroDifficulty = _state.value.difficulty) {
         timerJob?.cancel()
-        _state.update {
-            it.copy(
-                generating  = true,
-                difficulty  = d,
-                elapsedSecs = 0L,
-                errorCount  = 0,
-                isComplete  = false,
-                selected    = null,
-            )
-        }
+        undoStack.clear()
+        _state.update { it.copy(
+            generating   = true,
+            gridSize     = size,
+            difficulty   = diff,
+            playerDigits = emptyMap(),
+            notes        = emptyMap(),
+            selectedCell = null,
+            notesMode    = false,
+            hintsUsed    = 0,
+            isSolved     = false,
+            elapsedSecs  = 0,
+            canUndo      = false,
+            errorCount   = 0,
+        )}
         viewModelScope.launch(Dispatchers.Default) {
-            val (cells, runs, sol) = generateKakuro(d)
-            _state.update {
-                it.copy(
-                    generating = false,
-                    size       = cells.size,
-                    cells      = cells,
-                    runs       = runs,
-                    solution   = sol,
-                    errors     = emptySet(),
-                )
-            }
+            val puzzle = KakuroGenerator.generate(
+                size.innerRows, size.innerCols, diff.blackDensity, Random(System.nanoTime())
+            )
+            _state.update { it.copy(generating = false, puzzle = puzzle) }
         }
+        startTimer()
+    }
+
+    fun resetProgress() {
+        undoStack.clear()
+        _state.update { it.copy(
+            playerDigits = emptyMap(),
+            notes        = emptyMap(),
+            hintsUsed    = 0,
+            isSolved     = false,
+            elapsedSecs  = 0,
+            canUndo      = false,
+            errorCount   = 0,
+        )}
+        startTimer()
+    }
+
+    private fun startTimer() {
+        timerJob?.cancel()
         timerJob = viewModelScope.launch {
             while (true) {
                 delay(1000)
-                if (!_state.value.isComplete) _state.update { it.copy(elapsedSecs = it.elapsedSecs + 1) }
+                if (!_state.value.isSolved) _state.update { it.copy(elapsedSecs = it.elapsedSecs + 1) }
             }
         }
     }
 
-    fun select(r: Int, c: Int) {
-        val cell = _state.value.cells[r][c]
-        if (cell !is KakuroCell.White) return
-        _state.update { it.copy(selected = if (it.selected == r to c) null else r to c) }
+    // ── Selection & input ─────────────────────────────────────────────────────
+
+    fun selectCell(pos: KPos) {
+        val puzzle = _state.value.puzzle ?: return
+        if (puzzle.isWhite(pos.row, pos.col)) _state.update { it.copy(selectedCell = pos) }
     }
 
-    fun place(n: Int) {
-        val s = _state.value; val (r, c) = s.selected ?: return
-        val current = s.cells[r][c] as? KakuroCell.White ?: return
-        val newCells = s.cells.map { it.clone() }.toTypedArray()
-        newCells[r][c] = current.copy(value = n, notes = emptySet())
-        val errs   = computeKakuroErrors(newCells, s.runs)
-        val wasErr = (r to c) in s.errors
-        val newCnt = if (n != 0 && (r to c) in errs && !wasErr) s.errorCount + 1 else s.errorCount
-        val done   = errs.isEmpty() && newCells.all { row ->
-            row.all { cell -> cell !is KakuroCell.White || cell.value != 0 }
-        }
-        _state.update { it.copy(cells = newCells, errors = errs, errorCount = newCnt, isComplete = done) }
-    }
+    fun toggleNotesMode() { _state.update { it.copy(notesMode = !it.notesMode) } }
+    fun toggleShowMistakes() { _state.update { it.copy(showMistakes = !it.showMistakes) } }
 
-    fun erase() {
-        val s = _state.value; val (r, c) = s.selected ?: return
-        val current = s.cells[r][c] as? KakuroCell.White ?: return
-        val newCells = s.cells.map { it.clone() }.toTypedArray()
-        newCells[r][c] = current.copy(value = 0, notes = emptySet())
-        _state.update { it.copy(cells = newCells, errors = computeKakuroErrors(newCells, s.runs)) }
-    }
+    fun inputDigit(digit: Int) {
+        val s      = _state.value
+        val cell   = s.selectedCell ?: return
+        val puzzle = s.puzzle ?: return
+        if (s.isSolved) return
 
-    fun solve() {
-        val s = _state.value
-        val newCells = s.cells.map { it.clone() }.toTypedArray()
-        for (r in newCells.indices) for (c in newCells[r].indices) {
-            if (newCells[r][c] is KakuroCell.White && s.solution[r][c] > 0) {
-                newCells[r][c] = KakuroCell.White(s.solution[r][c])
+        if (s.notesMode) {
+            if (s.playerDigits.containsKey(cell)) return
+            recordUndo(s, cell)
+            val current = s.notes[cell] ?: emptySet()
+            _state.update { it.copy(
+                notes   = it.notes + (cell to if (digit in current) current - digit else current + digit),
+                canUndo = true,
+            )}
+        } else {
+            recordUndo(s, cell)
+            val newDigits = if (s.playerDigits[cell] == digit) {
+                s.playerDigits - cell
+            } else {
+                s.playerDigits + (cell to digit)
             }
+            val newNotes  = s.notes - cell
+            val wasErr    = cellHasConflict(s.puzzle, s.playerDigits, s.showMistakes, cell)
+            val newState  = s.copy(playerDigits = newDigits, notes = newNotes, canUndo = true)
+            val errs      = countErrors(puzzle, newDigits, true)
+            val newErrCnt = if (digit != 0 && cellHasConflict(puzzle, newDigits, true, cell) && !wasErr)
+                s.errorCount + 1 else s.errorCount
+            _state.update { it.copy(
+                playerDigits = newDigits,
+                notes        = newNotes,
+                canUndo      = true,
+                errorCount   = newErrCnt,
+                isSolved     = checkWin(puzzle, newDigits),
+            )}
         }
-        _state.update { it.copy(cells = newCells, isComplete = true, errors = emptySet()) }
+    }
+
+    fun eraseSelected() {
+        val s    = _state.value
+        val cell = s.selectedCell ?: return
+        if (s.isSolved) return
+        if (!s.playerDigits.containsKey(cell) && !s.notes.containsKey(cell)) return
+        recordUndo(s, cell)
+        _state.update { it.copy(
+            playerDigits = it.playerDigits - cell,
+            notes        = it.notes - cell,
+            canUndo      = true,
+        )}
+    }
+
+    fun undo() {
+        val entry = undoStack.removeLastOrNull() ?: return
+        _state.update { s ->
+            val newDigits = if (entry.previousDigit != null)
+                s.playerDigits + (entry.cell to entry.previousDigit)
+            else s.playerDigits - entry.cell
+            val newNotes  = if (entry.previousNotes.isNotEmpty())
+                s.notes + (entry.cell to entry.previousNotes)
+            else s.notes - entry.cell
+            s.copy(
+                playerDigits = newDigits,
+                notes        = newNotes,
+                isSolved     = false,
+                canUndo      = undoStack.isNotEmpty(),
+            )
+        }
+    }
+
+    fun useHint() {
+        val s      = _state.value
+        val puzzle = s.puzzle ?: return
+        if (s.isSolved) return
+
+        val target = s.selectedCell?.takeIf { s.playerDigits[it] != puzzle.solution[it.row][it.col] }
+            ?: puzzle.allWhiteCells.firstOrNull { s.playerDigits[it] != puzzle.solution[it.row][it.col] }
+            ?: return
+
+        recordUndo(s, target)
+        val newDigits = s.playerDigits + (target to puzzle.solution[target.row][target.col])
+        _state.update { it.copy(
+            playerDigits = newDigits,
+            notes        = it.notes - target,
+            selectedCell = target,
+            hintsUsed    = it.hintsUsed + 1,
+            canUndo      = true,
+            isSolved     = checkWin(puzzle, newDigits),
+        )}
+    }
+
+    // ── Conflict detection ────────────────────────────────────────────────────
+
+    fun cellHasConflict(
+        puzzle: KakuroPuzzleData?,
+        digits: Map<KPos, Int>,
+        showMistakes: Boolean,
+        cell: KPos,
+    ): Boolean {
+        if (!showMistakes || puzzle == null) return false
+        return runConflict(puzzle.acrossRunAt[cell], digits) || runConflict(puzzle.downRunAt[cell], digits)
+    }
+
+    private fun runConflict(run: KRun?, digits: Map<KPos, Int>): Boolean {
+        if (run == null) return false
+        val values = run.cells.mapNotNull { digits[it] }
+        return values.size != values.toSet().size || values.sum() > run.sum
+    }
+
+    private fun countErrors(puzzle: KakuroPuzzleData, digits: Map<KPos, Int>, show: Boolean): Int {
+        if (!show) return 0
+        return puzzle.allWhiteCells.count { cellHasConflict(puzzle, digits, show, it) && digits.containsKey(it) }
+    }
+
+    private fun checkWin(puzzle: KakuroPuzzleData, digits: Map<KPos, Int>): Boolean {
+        fun runOk(run: KRun): Boolean {
+            val vals = run.cells.map { digits[it] ?: return false }
+            return vals.toSet().size == vals.size && vals.sum() == run.sum
+        }
+        return puzzle.acrossRuns.all { runOk(it) } && puzzle.downRuns.all { runOk(it) }
+    }
+
+    // ── Undo bookkeeping ──────────────────────────────────────────────────────
+
+    private fun recordUndo(s: KakuroUiState, cell: KPos) {
+        undoStack.add(UndoEntry(cell, s.playerDigits[cell], s.notes[cell] ?: emptySet()))
+        if (undoStack.size > 200) undoStack.removeAt(0)
     }
 
     override fun onCleared() { timerJob?.cancel() }
