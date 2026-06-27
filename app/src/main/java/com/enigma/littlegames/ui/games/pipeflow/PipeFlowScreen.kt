@@ -1,12 +1,5 @@
 package com.enigma.littlegames.ui.games.pipeflow
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Pipe Flow Screen — Phase 3
-//   • Grid expands to fill available width; gap reduced from 4dp to 3dp
-//   • X (4-way) pipe renders with a distinctive cross glow when in flow
-//   • Board container has a subtle border glow matching the theme primary
-// ─────────────────────────────────────────────────────────────────────────────
-
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -19,6 +12,7 @@ import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -77,15 +71,15 @@ fun PipeFlowScreen(hub: HubViewModel) {
                 }
             )
 
-            // Campaign progress
-            val pct = (state.level.toFloat() / PIPE_CAMPAIGN.size).coerceIn(0f, 1f)
+            val totalPipes = PIPE_CAMPAIGN.size
+            val pct = (state.level.toFloat() / totalPipes).coerceIn(0f, 1f)
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("LVL", color = t.textSecondary, fontSize = 10.sp, modifier = Modifier.padding(end = 8.dp))
                 LinearProgressIndicator(
-                    progress = { pct },
+                    progress = pct,
                     modifier = Modifier.weight(1f).height(3.dp),
                     color = t.primary, trackColor = t.border,
                 )
@@ -95,7 +89,6 @@ fun PipeFlowScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(4.dp))
 
-            // Board — fills available width
             if (state.generating) {
                 Box(
                     Modifier.fillMaxWidth().aspectRatio(1f).weight(1f),
@@ -115,7 +108,6 @@ fun PipeFlowScreen(hub: HubViewModel) {
                         BoxWithConstraints(
                             Modifier.fillMaxWidth().aspectRatio(1f)
                                 .align(Alignment.Center)
-                                // Subtle glowing border around the entire board
                                 .shadow(
                                     elevation   = 12.dp,
                                     shape       = RoundedCornerShape(6.dp),
@@ -125,7 +117,6 @@ fun PipeFlowScreen(hub: HubViewModel) {
                                 .clip(RoundedCornerShape(6.dp))
                                 .border(1.5.dp, t.primary.copy(.5f), RoundedCornerShape(6.dp))
                         ) {
-                            // Reduced gap so pipes fill more of the board
                             val gap      = 3.dp
                             val cellSize = (maxWidth - (puzzle.size + 1) * gap) / puzzle.size
 
@@ -162,7 +153,6 @@ fun PipeFlowScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Flow result message
             val result = state.flowResult
             AnimatedVisibility(result != null || state.solved) {
                 val (msg, color) = when {
@@ -180,7 +170,6 @@ fun PipeFlowScreen(hub: HubViewModel) {
                 }
             }
 
-            // Solved panel
             AnimatedVisibility(state.solved) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -196,7 +185,6 @@ fun PipeFlowScreen(hub: HubViewModel) {
 
             Spacer(Modifier.weight(1f))
 
-            // Controls
             Row(
                 Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -212,8 +200,6 @@ fun PipeFlowScreen(hub: HubViewModel) {
         ParticleOverlay(particles)
     }
 }
-
-// ── Cell composable ───────────────────────────────────────────────────────────
 
 @Composable
 private fun PipeCellView(
@@ -259,7 +245,6 @@ private fun DrawScope.drawPipe(type: Char, lit: Boolean, t: GameTheme) {
 
     val ports = BASE_PORTS[type] ?: return
 
-    // Draw pipe segments
     if (ports[0]) { drawRect(pipe,  Offset(cx - pW/2, 0f), Size(pW, cy));       drawRect(fluid, Offset(cx - fW/2, 0f), Size(fW, cy)) }
     if (ports[1]) { drawRect(pipe,  Offset(cx, cy - pW/2), Size(w - cx, pW));   drawRect(fluid, Offset(cx, cy - fW/2), Size(w - cx, fW)) }
     if (ports[2]) { drawRect(pipe,  Offset(cx - pW/2, cy), Size(pW, h - cy));   drawRect(fluid, Offset(cx - fW/2, cy), Size(fW, h - cy)) }
@@ -267,20 +252,18 @@ private fun DrawScope.drawPipe(type: Char, lit: Boolean, t: GameTheme) {
 
     // Center hub — larger and more prominent for X pipes
     val hubRadius = if (type == 'X') pW * 1.0f else pW * 0.8f
-    val hubColor  = if (type == 'X') Color(0xFF3D4560) else Color(0xFF3D4560)
+    val hubColor = Color(0xFF3D4560)
     drawCircle(hubColor, hubRadius, Offset(cx, cy))
 
-    // Fluid center glow
     if (lit) {
         val glowRadius = if (type == 'X') fW * 1.2f else fW * 0.9f
         drawCircle(t.primary.copy(.6f), glowRadius, Offset(cx, cy))
-        // X pipes get an extra outer glow ring when carrying flow
         if (type == 'X') {
             drawCircle(
                 t.primary.copy(.25f),
                 pW * 0.95f,
                 Offset(cx, cy),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f)
+                style = Stroke(width = 1.5f)
             )
         }
     }
