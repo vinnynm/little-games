@@ -1,27 +1,29 @@
 package com.enigma.littlegames.ui.games.minesweeper
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Minesweeper Screen
-// Pure Canvas hex grid. Tap = reveal. Long-press = flag.
-// Hex cells drawn with flat-top orientation.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.animation.*
-import androidx.compose.foundation.*
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.*
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.drawscope.*
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
@@ -32,28 +34,61 @@ import com.enigma.littlegames.domain.Sfx
 import com.enigma.littlegames.domain.rememberParticleSystem
 import kotlin.math.*
 
-// Adjacency number colours (classic Minesweeper palette)
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+private const val HEX_GAP_RATIO = 0.92f
+private const val CELL_PADDING = 16f
+private const val MINE_RADIUS_RATIO = 0.28f
+private const val NUMBER_SIZE_RATIO = 0.70f
+private const val NUMBER_Y_OFFSET_RATIO = 0.25f
+
 private val ADJ_COLOURS = listOf(
-    Color.Transparent,          // 0 — no label
-    Color(0xFF4FC3F7),          // 1 — blue
-    Color(0xFF81C784),          // 2 — green
-    Color(0xFFE94560),          // 3 — red
-    Color(0xFF9C27B0),          // 4 — purple
-    Color(0xFFFF7043),          // 5 — deep orange
-    Color(0xFF26C6DA),          // 6 — cyan
-    Color(0xFFFFEE58),          // 7 — yellow
-    Color(0xFFBDBDBD),          // 8 — grey
+    Color.Transparent,      // 0
+    Color(0xFF42A5F5),      // 1 — blue
+    Color(0xFF66BB6A),      // 2 — green
+    Color(0xFFEF5350),      // 3 — red
+    Color(0xFFAB47BC),      // 4 — purple
+    Color(0xFFFF7043),      // 5 — deep orange
+    Color(0xFF26C6DA),      // 6 — cyan
+    Color(0xFFFFCA28),      // 7 — yellow
+    Color(0xFF78909C),      // 8 — grey
 )
+
+private val MINE_COLORS = listOf(
+    Color(0xFFE53935),      // primary
+    Color(0xFFB71C1C),      // dark
+    Color(0xFFFFCDD2),      // light
+)
+
+// ── Composable ───────────────────────────────────────────────────────────────
 
 @Composable
 fun MinesweeperScreen(hub: HubViewModel) {
-    val t         = LocalGameTheme.current
+    val t = LocalGameTheme.current
     val vm: MinesweeperViewModel = viewModel()
-    val state     by vm.state.collectAsStateWithLifecycle()
+    val state by vm.state.collectAsStateWithLifecycle()
     val particles = rememberParticleSystem()
 
-    var canvasWidth  by remember { mutableStateOf(1f) }
-    var canvasHeight by remember { mutableStateOf(1f) }
+    var canvasSize by remember { mutableStateOf(Size.Zero) }
+    var pressedCell by remember { mutableStateOf<HexCoord?>(null) }
+
+    // Pre-calculate hex geometry
+    val hexGeometry = remember(state.difficulty, canvasSize) {
+        if (canvasSize == Size.Zero) null
+        else HexGeometry.calculate(state.difficulty.radius, canvasSize)
+    }
+
+    // Text paints — cached to avoid allocation each frame
+    val numberPaints = remember {
+        ADJ_COLOURS.map { color ->
+            Paint().apply {
+                this.color = color.toArgb()
+                textAlign = Paint.Align.CENTER
+                isAntiAlias = true
+                typeface = Typeface.DEFAULT_BOLD
+            }
+        }
+    }
 
     LaunchedEffect(state.phase) {
         when (state.phase) {
@@ -61,9 +96,10 @@ fun MinesweeperScreen(hub: HubViewModel) {
                 hub.recordMinesweeperWin(state.difficulty.label, state.elapsedSecs)
                 hub.sound.play(Sfx.VICTORY)
                 particles.burst(
-                    center = Offset(canvasWidth / 2f, canvasHeight / 2f),
-                    colors = listOf(t.primary, t.accent, Color.White, t.warning),
-                    count  = 65, speed = 0.4f,
+                    center = Offset(canvasSize.width / 2f, canvasSize.height / 2f),
+                    colors = listOf(t.primary, t.accent, Color.White, t.warning, t.success),
+                    count = 80,
+                    speed = 0.5f,
                 )
             }
             MinesweeperPhase.LOST -> hub.sound.play(Sfx.FLOW_FAIL)
@@ -73,134 +109,89 @@ fun MinesweeperScreen(hub: HubViewModel) {
 
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize().systemBarsPadding().background(t.background)
+            Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .background(t.background)
                 .padding(horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            val timer = remember(state.elapsedSecs) {
-                "%02d:%02d".format(state.elapsedSecs / 60, state.elapsedSecs % 60)
-            }
+            val timer = formatTime(state.elapsedSecs)
 
             GameTopBar(
-                title    = "MINESWEEPER",
+                title = "MINESWEEPER",
                 subtitle = "${state.difficulty.emoji} ${state.difficulty.label}  ·  hex grid",
-                onBack   = { hub.navigate(HubScreen.Home) },
-                actions  = {
-                    Text(timer, color = t.primary, fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp))
+                onBack = { hub.navigate(HubScreen.Home) },
+                actions = {
+                    MineCounterDisplay(
+                        remaining = state.mineCount - state.flagCount,
+                        theme = t
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    TimerDisplay(timer, t)
                 }
             )
 
-            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly) {
-                MiniStat("MINES",   "${state.mineCount - state.flagCount}")
-                MiniStat("FLAGS",   "${state.flagCount}")
-                MiniStat("SAFE",    "${state.revealCount}/${state.safeCount}")
-            }
+            StatsRow(state, t)
+            PhaseBanner(state.phase, timer, t)
 
-            // Phase banners
-            AnimatedVisibility(state.phase == MinesweeperPhase.WON) {
-                Surface(Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    color = t.success.copy(.15f), shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, t.success.copy(.5f))) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center) {
-                        Text("🎉  CLEARED!", color = t.success,
-                            fontWeight = FontWeight.Black, fontSize = 15.sp)
-                        Text("  ·  $timer", color = t.textSecondary, fontSize = 11.sp)
-                    }
-                }
-            }
-            AnimatedVisibility(state.phase == MinesweeperPhase.LOST) {
-                Surface(Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    color = Color(0xFFE94560).copy(.12f), shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, Color(0xFFE94560).copy(.4f))) {
-                    Text("💥  BOOM!  Try again.",
-                        color = Color(0xFFE94560), fontWeight = FontWeight.Black,
-                        fontSize = 15.sp, textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(12.dp))
-                }
-            }
-            AnimatedVisibility(state.phase == MinesweeperPhase.IDLE) {
-                Text("Tap any cell to start · long-press to flag",
-                    color = t.textSecondary, fontSize = 12.sp)
-            }
-
-            // ── Hex board canvas ──────────────────────────────────────────────
+            // ── Hex board ───────────────────────────────────────────────
             Box(
                 Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .onGloballyPositioned { coords ->
-                        canvasWidth  = coords.size.width.toFloat()
-                        canvasHeight = coords.size.height.toFloat()
+                        canvasSize = Size(
+                            coords.size.width.toFloat(),
+                            coords.size.height.toFloat()
+                        )
                     }
             ) {
-                if (!state.generating && state.board.isNotEmpty()) {
-                    val hexRadius = computeHexRadius(
-                        state.difficulty.radius, canvasWidth, canvasHeight
-                    )
-                    val originX = canvasWidth  / 2f
-                    val originY = canvasHeight / 2f
-
-                    Canvas(
-                        Modifier
-                            .fillMaxSize()
-                            .pointerInput(state.board, hexRadius) {
-                                detectTapGestures(
-                                    onTap = { offset ->
-                                        val coord = pixelToHex(offset, hexRadius, originX, originY)
-                                        if (coord != null && state.board.containsKey(coord)) {
-                                            hub.sound.play(Sfx.TAP)
-                                            vm.reveal(coord)
-                                        }
-                                    },
-                                    onLongPress = { offset ->
-                                        val coord = pixelToHex(offset, hexRadius, originX, originY)
-                                        if (coord != null && state.board.containsKey(coord)) {
-                                            hub.sound.play(Sfx.ROTATE)
-                                            vm.toggleFlag(coord)
-                                        }
-                                    },
-                                )
+                hexGeometry?.let { geo ->
+                    HexBoardCanvas(
+                        state = state,
+                        geometry = geo,
+                        numberPaints = numberPaints,
+                        theme = t,
+                        pressedCell = pressedCell,
+                        onTap = { coord ->
+                            pressedCell = null
+                            if (state.board.containsKey(coord)) {
+                                hub.sound.play(Sfx.TAP)
+                                vm.reveal(coord)
                             }
-                    ) {
-                        state.board.forEach { (coord, cell) ->
-                            val (cx, cy) = hexToPixel(coord, hexRadius, originX, originY)
-                            drawHexCell(cell, cx, cy, hexRadius, t)
+                        },
+                        onLongPress = { coord ->
+                            if (state.board.containsKey(coord)) {
+                                hub.sound.play(Sfx.ROTATE)
+                                vm.toggleFlag(coord)
+                            }
+                        },
+                        onPressChange = { coord ->
+                            pressedCell = coord
                         }
-                    }
+                    )
                 }
             }
 
             Spacer(Modifier.height(8.dp))
 
-            // Difficulty tabs
-            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                .background(t.surface).padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                MineDifficulty.entries.forEach { d ->
-                    val sel = state.difficulty == d
-                    Box(
-                        Modifier.weight(1f).clip(RoundedCornerShape(7.dp))
-                            .background(if (sel) t.primary else Color.Transparent)
-                            .clickable { hub.sound.play(Sfx.TAP); vm.newGame(d) }
-                            .padding(vertical = 7.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("${d.emoji} ${d.label.take(3)}",
-                            color = if (sel) t.background else t.textSecondary,
-                            fontSize = 10.sp,
-                            fontWeight = if (sel) FontWeight.Black else FontWeight.Normal)
-                    }
-                }
+            DifficultySelector(state, t) { d ->
+                hub.sound.play(Sfx.TAP)
+                vm.newGame(d)
             }
 
             Spacer(Modifier.height(8.dp))
 
-            ThemedButton("↺  New Game", {
-                hub.sound.play(Sfx.TAP); vm.newGame(state.difficulty)
-            }, Modifier.fillMaxWidth(), outlined = true)
+            ThemedButton(
+                text = "↺ New Game",
+                onClick = {
+                    hub.sound.play(Sfx.TAP)
+                    vm.newGame(state.difficulty)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                outlined = true
+            )
 
             Spacer(Modifier.height(16.dp))
         }
@@ -209,93 +200,494 @@ fun MinesweeperScreen(hub: HubViewModel) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Canvas hex drawing
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Sub-composables ──────────────────────────────────────────────────────────
+
+@Composable
+private fun MineCounterDisplay(remaining: Int, theme: GameTheme) {
+    val displayValue = remaining.coerceIn(-99, 999).toString().padStart(3, ' ')
+    Surface(
+        color = Color.Black.copy(alpha = 0.3f),
+        shape = RoundedCornerShape(4.dp),
+        contentColor = when {
+            remaining < 0 -> Color(0xFFFF5252)
+            remaining == 0 -> theme.success
+            else -> Color(0xFFFF5252)
+        }
+    ) {
+        Text(
+            displayValue,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Black,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 1.sp
+        )
+    }
+}
+
+@Composable
+private fun TimerDisplay(time: String, theme: GameTheme) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.3f),
+        shape = RoundedCornerShape(4.dp),
+        contentColor = theme.primary
+    ) {
+        Text(
+            time,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Black,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 1.sp
+        )
+    }
+}
+
+@Composable
+private fun StatsRow(state: MinesweeperState, t: GameTheme) {
+    val progress = if (state.safeCount > 0) {
+        state.revealCount.toFloat() / state.safeCount.toFloat()
+    } else 0f
+
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MiniStat("FLAGS", "${state.flagCount}")
+
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                "${(progress * 100).toInt()}%",
+                color = t.primary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.width(60.dp).height(4.dp).clip(RoundedCornerShape(2.dp)),
+                color = t.primary,
+                trackColor = t.surface,
+                strokeCap = StrokeCap.Round
+            )
+        }
+
+        MiniStat("REMAIN", "${state.safeCount - state.revealCount}")
+    }
+}
+
+@Composable
+private fun PhaseBanner(phase: MinesweeperPhase, timer: String, t: GameTheme) {
+    AnimatedVisibility(
+        visible = phase == MinesweeperPhase.WON,
+        enter = fadeIn(animationSpec = tween(300)) + expandVertically(),
+        exit = fadeOut(animationSpec = tween(200)) + shrinkVertically()
+    ) {
+        Surface(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            color = t.success.copy(alpha = 0.15f),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, t.success.copy(alpha = 0.5f))
+        ) {
+            Row(
+                Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text("🎉 CLEARED!", color = t.success, fontWeight = FontWeight.Black, fontSize = 15.sp)
+                Text(" · $timer", color = t.textSecondary, fontSize = 11.sp)
+            }
+        }
+    }
+
+    AnimatedVisibility(
+        visible = phase == MinesweeperPhase.LOST,
+        enter = fadeIn(animationSpec = tween(300)) + expandVertically(),
+        exit = fadeOut(animationSpec = tween(200)) + shrinkVertically()
+    ) {
+        Surface(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            color = Color(0xFFE53935).copy(alpha = 0.12f),
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, Color(0xFFE53935).copy(alpha = 0.4f))
+        ) {
+            Text(
+                "💥 BOOM! Try again.",
+                color = Color(0xFFE53935),
+                fontWeight = FontWeight.Black,
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(12.dp)
+            )
+        }
+    }
+
+    AnimatedVisibility(
+        visible = phase == MinesweeperPhase.IDLE,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        Text(
+            "Tap to start · Long-press to flag · Tap number to chord",
+            color = t.textSecondary,
+            fontSize = 11.sp
+        )
+    }
+}
+
+@Composable
+private fun DifficultySelector(
+    state: MinesweeperState,
+    t: GameTheme,
+    onSelect: (MineDifficulty) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(t.surface)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        MineDifficulty.entries.forEach { d ->
+            val selected = state.difficulty == d
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(7.dp))
+                    .clickable { onSelect(d) },
+                color = if (selected) t.primary else Color.Transparent,
+                shape = RoundedCornerShape(7.dp),
+                border = if (!selected) BorderStroke(1.dp, t.border.copy(alpha = 0.3f)) else null
+            ) {
+                Box(
+                    modifier = Modifier.padding(vertical = 7.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "${d.emoji} ${d.label}",
+                        color = if (selected) t.background else t.textSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = if (selected) FontWeight.Black else FontWeight.Normal
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Hex Board Canvas ─────────────────────────────────────────────────────────
+
+@Composable
+private fun HexBoardCanvas(
+    state: MinesweeperState,
+    geometry: HexGeometry,
+    numberPaints: List<Paint>,
+    theme: GameTheme,
+    pressedCell: HexCoord?,
+    onTap: (HexCoord) -> Unit,
+    onLongPress: (HexCoord) -> Unit,
+    onPressChange: (HexCoord?) -> Unit,
+) {
+    Canvas(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(state.board, geometry) {
+                detectTapGestures(
+                    onTap = { offset: Offset ->
+                        val coord = geometry.pixelToHex(offset) ?: return@detectTapGestures
+                        onPressChange(null)
+                        onTap(coord)
+                    },
+                    onLongPress = { offset: Offset ->
+                        val coord = geometry.pixelToHex(offset) ?: return@detectTapGestures
+                        onPressChange(null)
+                        onLongPress(coord)
+                    },
+                    onPress = { offset: Offset ->
+                        val coord = geometry.pixelToHex(offset)
+                        onPressChange(coord)
+                        tryAwaitRelease()
+                        onPressChange(null)
+                    }
+                )
+            }
+    ) {
+        // Draw shadows first
+        state.board.forEach { (coord, _) ->
+            val (cx, cy) = geometry.hexToPixel(coord)
+            drawHexShadow(cx, cy, geometry.radius)
+        }
+
+        // Draw cells
+        state.board.forEach { (coord, cell) ->
+            val (cx, cy) = geometry.hexToPixel(coord)
+            val isPressed = coord == pressedCell && !cell.isRevealed && !cell.isFlagged
+            drawHexCell(cell, cx, cy, geometry.radius, theme, numberPaints, isPressed)
+        }
+
+        // Highlight neighbours of pressed revealed number cell (chord hint)
+        pressedCell?.let { coord ->
+            val cell = state.board[coord]
+            if (cell?.isRevealed == true && cell.adjMines > 0) {
+                coord.neighbours().forEach { nb ->
+                    val nbCell = state.board[nb]
+                    if (nbCell != null && !nbCell.isRevealed && !nbCell.isFlagged) {
+                        val (nx, ny) = geometry.hexToPixel(nb)
+                        drawHexHighlight(nx, ny, geometry.radius, theme.primary.copy(alpha = 0.2f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Drawing functions ────────────────────────────────────────────────────────
+
+private fun DrawScope.drawHexShadow(cx: Float, cy: Float, radius: Float) {
+    val shadowPath = hexPath(cx + 2f, cy + 2f, radius * HEX_GAP_RATIO)
+    drawPath(path = shadowPath, color = Color.Black.copy(alpha = 0.15f))
+}
 
 private fun DrawScope.drawHexCell(
     cell: HexCell,
-    cx: Float, cy: Float,
+    cx: Float,
+    cy: Float,
     radius: Float,
-    t: GameTheme,
+    theme: GameTheme,
+    numberPaints: List<Paint>,
+    isPressed: Boolean,
 ) {
-    val path = hexPath(cx, cy, radius * 0.94f)   // slight gap between cells
+    val r = radius * HEX_GAP_RATIO
+    val path = hexPath(cx, cy, r)
 
-    val bgColor = when {
-        cell.isMine && cell.isRevealed -> Color(0xFFE94560).copy(.6f)
-        cell.isRevealed                -> t.surfaceVariant
-        cell.isFlagged                 -> t.warning.copy(.25f)
-        else                           -> t.surface
+    when {
+        cell.isMine && cell.isRevealed -> drawRevealedMine(path, cx, cy, r, cell.isWrongFlag)
+        cell.isRevealed -> drawRevealedCell(path, cx, cy, r, cell, theme, numberPaints)
+        cell.isFlagged -> drawFlaggedCell(path, cx, cy, r, theme, cell.isWrongFlag)
+        else -> drawHiddenCell(path, cx, cy, r, theme, isPressed)
     }
+}
 
+private fun DrawScope.drawHiddenCell(
+    path: Path,
+    cx: Float,
+    cy: Float,
+    r: Float,
+    theme: GameTheme,
+    isPressed: Boolean,
+) {
+    val bgColor = if (isPressed) theme.surfaceVariant else theme.surface
     drawPath(path, bgColor)
-    drawPath(path, t.border.copy(.4f), style = Stroke(1.5f))
 
-    if (cell.isFlagged && !cell.isRevealed) {
-        // Flag emoji-style dot
-        drawCircle(t.warning, radius * 0.22f, Offset(cx, cy))
+    // Inner bevel effect
+    val innerPath = hexPath(cx, cy, r * 0.85f)
+    drawPath(innerPath, theme.surface.copy(alpha = 0.5f))
+
+    drawPath(path, theme.border.copy(alpha = 0.4f), style = Stroke(1.2f))
+}
+
+private fun DrawScope.drawRevealedCell(
+    path: Path,
+    cx: Float,
+    cy: Float,
+    r: Float,
+    cell: HexCell,
+    theme: GameTheme,
+    numberPaints: List<Paint>,
+) {
+    val bgColor = if (cell.adjMines == 0) {
+        theme.surfaceVariant.copy(alpha = 0.7f)
+    } else {
+        theme.surfaceVariant
+    }
+    drawPath(path, bgColor)
+    drawPath(path, theme.border.copy(alpha = 0.2f), style = Stroke(0.8f))
+
+    if (cell.adjMines > 0) {
+        val paintIndex = cell.adjMines.coerceIn(numberPaints.indices)
+        val paint = numberPaints[paintIndex]
+        paint.textSize = r * NUMBER_SIZE_RATIO
+        drawContext.canvas.nativeCanvas.drawText(
+            "${cell.adjMines}",
+            cx,
+            cy + r * NUMBER_Y_OFFSET_RATIO,
+            paint
+        )
+    }
+}
+
+private fun DrawScope.drawFlaggedCell(
+    path: Path,
+    cx: Float,
+    cy: Float,
+    r: Float,
+    theme: GameTheme,
+    isWrong: Boolean,
+) {
+    drawPath(path, theme.warning.copy(alpha = 0.2f))
+    drawPath(path, theme.border.copy(alpha = 0.4f), style = Stroke(1.2f))
+
+    // Flag pole
+    val poleColor = if (isWrong) Color(0xFFE53935) else Color(0xFF795548)
+    drawLine(
+        poleColor,
+        Offset(cx, cy - r * 0.35f),
+        Offset(cx, cy + r * 0.35f),
+        strokeWidth = 2f
+    )
+
+    // Flag triangle
+    val flagColor = if (isWrong) Color(0xFFE53935) else theme.warning
+    val flagPath = Path().apply {
+        moveTo(cx, cy - r * 0.35f)
+        lineTo(cx + r * 0.3f, cy - r * 0.15f)
+        lineTo(cx, cy + r * 0.05f)
+        close()
+    }
+    drawPath(flagPath, flagColor)
+
+    // Base
+    drawLine(
+        poleColor,
+        Offset(cx - r * 0.2f, cy + r * 0.35f),
+        Offset(cx + r * 0.2f, cy + r * 0.35f),
+        strokeWidth = 2f
+    )
+
+    // Wrong indicator
+    if (isWrong) {
+        drawLine(Color.White, Offset(cx - r * 0.3f, cy - r * 0.3f), Offset(cx + r * 0.3f, cy + r * 0.3f), strokeWidth = 3f)
+        drawLine(Color.White, Offset(cx + r * 0.3f, cy - r * 0.3f), Offset(cx - r * 0.3f, cy + r * 0.3f), strokeWidth = 3f)
+    }
+}
+
+private fun DrawScope.drawRevealedMine(
+    path: Path,
+    cx: Float,
+    cy: Float,
+    r: Float,
+    isWrongFlag: Boolean,
+) {
+    drawPath(path, Color(0xFFE53935).copy(alpha = 0.5f))
+    drawPath(path, Color(0xFFB71C1C).copy(alpha = 0.3f), style = Stroke(1.5f))
+
+    if (isWrongFlag) {
+        drawLine(Color.White, Offset(cx - r * 0.3f, cy - r * 0.3f), Offset(cx + r * 0.3f, cy + r * 0.3f), strokeWidth = 3f)
+        drawLine(Color.White, Offset(cx + r * 0.3f, cy - r * 0.3f), Offset(cx - r * 0.3f, cy + r * 0.3f), strokeWidth = 3f)
         return
     }
 
-    if (cell.isRevealed) {
-        if (cell.isMine) {
-            // Mine — filled red circle
-            drawCircle(Color(0xFFE94560), radius * 0.30f, Offset(cx, cy))
-            drawCircle(Color.Black.copy(.4f), radius * 0.15f, Offset(cx, cy))
-        } else if (cell.adjMines > 0) {
-            // Draw number via native canvas text
-            val paint = Paint().apply {
-                color     = ADJ_COLOURS.getOrElse(cell.adjMines) { Color.White }.toArgb()
-                textSize  = radius * 0.72f
-                textAlign = Paint.Align.CENTER
-                isAntiAlias = true
-                typeface = Typeface.DEFAULT_BOLD
-            }
-            drawContext.canvas.nativeCanvas.drawText(
-                "${cell.adjMines}", cx, cy + radius * 0.26f, paint
+    // Mine body
+    drawCircle(MINE_COLORS[0], r * MINE_RADIUS_RATIO, Offset(cx, cy))
+
+    // Spikes
+    val spikeLength = r * 0.35f
+    val spikeWidth = r * 0.06f
+    for (i in 0 until 8) {
+        val angle = Math.toRadians(45.0 * i)
+        val dx = cos(angle).toFloat() * spikeLength
+        val dy = sin(angle).toFloat() * spikeLength
+        drawLine(
+            MINE_COLORS[0],
+            Offset(cx, cy),
+            Offset(cx + dx, cy + dy),
+            strokeWidth = spikeWidth,
+            cap = StrokeCap.Round
+        )
+    }
+
+    // Shine highlight
+    drawCircle(MINE_COLORS[2].copy(alpha = 0.8f), r * 0.10f, Offset(cx - r * 0.08f, cy - r * 0.08f))
+}
+
+private fun DrawScope.drawHexHighlight(cx: Float, cy: Float, radius: Float, color: Color) {
+    val path = hexPath(cx, cy, radius * HEX_GAP_RATIO)
+    drawPath(path, color)
+}
+
+private fun hexPath(cx: Float, cy: Float, radius: Float): Path {
+    return Path().apply {
+        for (i in 0..5) {
+            val angle = Math.toRadians(60.0 * i)
+            val x = cx + radius * cos(angle).toFloat()
+            val y = cy + radius * sin(angle).toFloat()
+            if (i == 0) moveTo(x, y) else lineTo(x, y)
+        }
+        close()
+    }
+}
+
+// ── Hex Geometry ─────────────────────────────────────────────────────────────
+
+@Stable
+data class HexGeometry(
+    val radius: Float,
+    val originX: Float,
+    val originY: Float,
+    private val gridSize: Int,
+) {
+    fun hexToPixel(coord: HexCoord): Pair<Float, Float> {
+        val x = originX + radius * (3f / 2f * coord.q)
+        val y = originY + radius * (SQRT3 * (coord.r + coord.q / 2f))
+        return x to y
+    }
+
+    fun pixelToHex(offset: Offset): HexCoord? {
+        val dx = offset.x - originX
+        val dy = offset.y - originY
+        val q = (2f / 3f * dx) / radius
+        val r = (-1f / 3f * dx + SQRT3 / 3f * dy) / radius
+        val result = cubeRound(q, -q - r, r)
+        val coord = HexCoord(result.first, result.second)
+        return if (isValidCoord(coord)) coord else null
+    }
+
+    private fun isValidCoord(coord: HexCoord): Boolean {
+        val s = -coord.q - coord.r
+        return maxOf(abs(coord.q), abs(coord.r), abs(s)) <= gridSize
+    }
+
+    companion object {
+        private const val SQRT3 = 1.7320508f
+
+        fun calculate(gridRadius: Int, canvasSize: Size): HexGeometry {
+            val margin = CELL_PADDING * 2
+            val w = canvasSize.width - margin
+            val h = canvasSize.height - margin
+            val hexW = w / (gridRadius * 3f + 1.5f)
+            val hexH = h / ((gridRadius * 2 + 1) * SQRT3)
+            val radius = minOf(hexW, hexH).coerceAtLeast(8f)
+            return HexGeometry(
+                radius = radius,
+                originX = canvasSize.width / 2f,
+                originY = canvasSize.height / 2f,
+                gridSize = gridRadius,
             )
         }
     }
 }
 
-private fun hexPath(cx: Float, cy: Float, radius: Float): Path {
-    val path = Path()
-    for (i in 0..5) {
-        // Flat-top: angle offset = 0°
-        val angle = Math.PI / 180.0 * (60.0 * i)
-        val x = cx + radius * cos(angle).toFloat()
-        val y = cy + radius * sin(angle).toFloat()
-        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+private fun cubeRound(q: Float, r: Float, s: Float): Triple<Int, Int, Int> {
+    var rq = q.roundToInt()
+    var rr = r.roundToInt()
+    var rs = s.roundToInt()
+
+    val qDiff = abs(rq.toDouble() - q)
+    val rDiff = abs(rr.toDouble() - r)
+    val sDiff = abs(rs.toDouble() - s)
+
+    when {
+        qDiff > rDiff && qDiff > sDiff -> rq = -rr - rs
+        rDiff > sDiff -> rr = -rq - rs
+        else -> rs = -rq - rr
     }
-    path.close()
-    return path
+
+    return Triple(rq, rr, rs)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Coordinate helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-private fun computeHexRadius(gridRadius: Int, w: Float, h: Float): Float {
-    // Fit the hex grid in the available space with a small margin
-    val margin = 16f
-    val hexW = (w - margin * 2) / (gridRadius * 3f + 1.5f)
-    val hexH = (h - margin * 2) / ((gridRadius * 2 + 1) * sqrt(3f))
-    return minOf(hexW, hexH).coerceAtLeast(8f)
+private fun formatTime(secs: Long): String {
+    val m = (secs / 60).coerceAtMost(99)
+    val s = (secs % 60)
+    return "%02d:%02d".format(m, s)
 }
-
-private fun pixelToHex(
-    offset: Offset,
-    size: Float,
-    originX: Float,
-    originY: Float,
-): HexCoord? {
-    val dx = offset.x - originX
-    val dy = offset.y - originY
-    val q  = ((2f / 3f * dx) / size).roundToInt()
-    val r  = ((-1f / 3f * dx + sqrt(3f) / 3f * dy) / size).roundToInt()
-    return HexCoord(q, r)
-}
-
-private fun Float.roundToInt() = roundToInt(this.toDouble())
-
-private fun roundToInt(d: Double) = Math.round(d).toInt()
