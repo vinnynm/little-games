@@ -257,7 +257,7 @@ private fun WordleTile(
     Box(
         Modifier
             .size(52.dp)
-            .scale(scaleY = scaleY.coerceAtLeast(0.01f), scaleX = 0f)
+            .scale(scaleY = scaleY.coerceAtLeast(0.01f), scaleX = 1f)
             .clip(RoundedCornerShape(4.dp))
             .background(bgColor)
             .border(2.dp, borderColor, RoundedCornerShape(4.dp)),

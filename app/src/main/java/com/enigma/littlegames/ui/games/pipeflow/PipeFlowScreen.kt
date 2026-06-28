@@ -45,7 +45,7 @@ fun PipeFlowScreen(hub: HubViewModel) {
             hub.sound.play(Sfx.FLOW_SUCCESS)
             particles.burst(
                 center = boardCenter,
-                colors = listOf(t.primary, t.primary.copy(.6f), Color.White, t.accent),
+                colors = listOf(t.primary, t.primary.copy(alpha = 0.6f), Color.White, t.accent),
                 count  = 60, speed = 0.35f,
             )
         }
@@ -61,9 +61,12 @@ fun PipeFlowScreen(hub: HubViewModel) {
             Modifier.fillMaxSize().systemBarsPadding().background(t.background).padding(horizontal = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            val bossSuffix = if (state.puzzle?.bossMode == true) "  ·  ⚡ BOSS" else ""
             GameTopBar(
                 title    = "PIPE FLOW",
-                subtitle = state.puzzle?.let { "Lvl ${state.level}  ·  \"${it.title}\"  ·  Par ${it.par}" },
+                subtitle = state.puzzle?.let {
+                    "Lvl ${state.level}  ·  \"${it.title}\"  ·  Par ${it.par}$bossSuffix"
+                },
                 onBack   = { hub.navigate(HubScreen.Home) },
                 actions  = {
                     Text("${state.moves} mv", color = t.primary, fontSize = 12.sp,
@@ -79,12 +82,25 @@ fun PipeFlowScreen(hub: HubViewModel) {
             ) {
                 Text("LVL", color = t.textSecondary, fontSize = 10.sp, modifier = Modifier.padding(end = 8.dp))
                 LinearProgressIndicator(
-                    progress = pct,
+                    progress = { pct },
                     modifier = Modifier.weight(1f).height(3.dp),
                     color = t.primary, trackColor = t.border,
                 )
                 Text("⭐ ${state.totalStars}", color = t.warning, fontSize = 11.sp,
                     fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
+            }
+
+            if (state.altRouteBadge) {
+                Surface(
+                    Modifier.fillMaxWidth().padding(top = 2.dp),
+                    color = t.accent.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, t.accent.copy(alpha = 0.5f))
+                ) {
+                    Text("🏆 ALTERNATIVE ROUTE — Unique solution found!",
+                        color = t.accent, fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center, modifier = Modifier.padding(vertical = 4.dp))
+                }
             }
 
             Spacer(Modifier.height(4.dp))
@@ -109,13 +125,13 @@ fun PipeFlowScreen(hub: HubViewModel) {
                             Modifier.fillMaxWidth().aspectRatio(1f)
                                 .align(Alignment.Center)
                                 .shadow(
-                                    elevation   = 12.dp,
-                                    shape       = RoundedCornerShape(6.dp),
-                                    ambientColor = t.primary.copy(.25f),
-                                    spotColor   = t.primary.copy(.35f),
+                                    elevation    = 12.dp,
+                                    shape        = RoundedCornerShape(6.dp),
+                                    ambientColor = t.primary.copy(alpha = 0.25f),
+                                    spotColor    = t.primary.copy(alpha = 0.35f),
                                 )
                                 .clip(RoundedCornerShape(6.dp))
-                                .border(1.5.dp, t.primary.copy(.5f), RoundedCornerShape(6.dp))
+                                .border(1.5.dp, t.primary.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                         ) {
                             val gap      = 3.dp
                             val cellSize = (maxWidth - (puzzle.size + 1) * gap) / puzzle.size
@@ -135,13 +151,26 @@ fun PipeFlowScreen(hub: HubViewModel) {
                                             val idx    = row * puzzle.size + col
                                             val cell   = state.cells[idx]
                                             val inFlow = state.flowResult?.visited?.contains(idx) == true
-                                            PipeCellView(cell, idx, cellSize, t, inFlow,
-                                                onRotate = {
-                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                    hub.sound.play(Sfx.ROTATE)
-                                                    vm.rotateCell(it)
+
+                                            // Fixed: Use 'when (cell.type)' instead of 'when { cell.type == ... }'
+                                            when (cell.type) {
+                                                'N', 'O' -> InletOutletView(cell, cellSize, t, inFlow)
+                                                '#' -> Box(
+                                                    Modifier.size(cellSize)
+                                                        .clip(RoundedCornerShape(5.dp))
+                                                        .background(t.surface.copy(alpha = 0.5f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text("🪨", fontSize = (cellSize.value * 0.4f).sp)
                                                 }
-                                            )
+                                                else -> PipeCellView(cell, idx, cellSize, t, inFlow,
+                                                    onRotate = {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        hub.sound.play(Sfx.ROTATE)
+                                                        vm.rotateCell(it)
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -154,23 +183,23 @@ fun PipeFlowScreen(hub: HubViewModel) {
             Spacer(Modifier.height(8.dp))
 
             val result = state.flowResult
-            AnimatedVisibility(result != null || state.solved) {
+            AnimatedVisibility(visible = result != null || state.solved) {
                 val (msg, color) = when {
                     state.solved           -> "✓ PERFECT SEAL — Water flows freely!" to t.success
                     result?.leaked == true -> "💧 LEAK — an open port has no match."  to t.warning
-                    else                   -> "⚠ PATH BROKEN — outlet not reached."   to t.error
+                    else                   -> "⚠ PATH BROKEN — outlet not reached."   to Color(0xFFE94560)
                 }
                 Surface(
-                    Modifier.fillMaxWidth(), color = color.copy(.12f),
+                    Modifier.fillMaxWidth(), color = color.copy(alpha = 0.12f),
                     shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, color.copy(.4f))
+                    border = BorderStroke(1.dp, color.copy(alpha = 0.4f))
                 ) {
                     Text(msg, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center, modifier = Modifier.padding(10.dp))
                 }
             }
 
-            AnimatedVisibility(state.solved) {
+            AnimatedVisibility(visible = state.solved) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(top = 8.dp)
@@ -201,16 +230,104 @@ fun PipeFlowScreen(hub: HubViewModel) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Inlet / Outlet — clear directional pipe stub with colored indicator
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun InletOutletView(
+    cell: PipeCell, size: Dp, t: GameTheme, inFlow: Boolean,
+) {
+    val isOutlet = cell.type == 'O'
+    val dir = cell.nodeDir
+    val baseColor = if (isOutlet) t.warning else t.success
+    val activeColor = if (inFlow) baseColor else t.surfaceVariant
+    val borderColor by animateColorAsState(
+        if (inFlow) activeColor else t.border, tween(200), label = "node_b"
+    )
+
+    Box(
+        Modifier.size(size)
+            .clip(RoundedCornerShape(5.dp))
+            .background(t.surface)
+            .border(1.dp, borderColor, RoundedCornerShape(5.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            // Fixed: Explicitly use `this.size` to avoid shadowing the `size: Dp` parameter
+            val w = this.size.width
+            val h = this.size.height
+            val cx = w / 2f; val cy = h / 2f
+            val pW = w * 0.24f; val fW = w * 0.13f
+            val pipe = Color(0xFF2D3548)
+            val fluid = if (inFlow) activeColor else Color.Transparent
+
+            when (dir) {
+                0 -> {
+                    drawRect(pipe, Offset(cx - pW / 2, 0f), Size(pW, cy))
+                    drawRect(fluid, Offset(cx - fW / 2, 0f), Size(fW, cy))
+                }
+                1 -> {
+                    drawRect(pipe, Offset(cx, cy - pW / 2), Size(w - cx, pW))
+                    drawRect(fluid, Offset(cx, cy - fW / 2), Size(w - cx, fW))
+                }
+                2 -> {
+                    drawRect(pipe, Offset(cx - pW / 2, cy), Size(pW, h - cy))
+                    drawRect(fluid, Offset(cx - fW / 2, cy), Size(fW, h - cy))
+                }
+                3 -> {
+                    drawRect(pipe, Offset(0f, cy - pW / 2), Size(cx, pW))
+                    drawRect(fluid, Offset(0f, cy - fW / 2), Size(cx, fW))
+                }
+            }
+
+            val hubR = pW * 1.0f
+            drawCircle(pipe, hubR, Offset(cx, cy))
+            drawCircle(activeColor, hubR * 0.8f, Offset(cx, cy))
+            drawCircle(Color.White.copy(alpha = 0.25f), hubR * 0.45f, Offset(cx, cy))
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(top = 1.dp)
+        ) {
+            Text(
+                if (isOutlet) "OUT" else "IN",
+                color = Color.White,
+                fontSize = (size.value * 0.13f).sp,
+                fontWeight = FontWeight.Black,
+                lineHeight = (size.value * 0.15f).sp,
+            )
+            if (cell.nodeLabel != ' ') {
+                Text(
+                    cell.nodeLabel.toString(),
+                    color = t.warning,
+                    fontSize = (size.value * 0.16f).sp,
+                    fontWeight = FontWeight.Black,
+                )
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Regular pipe cell
+// ─────────────────────────────────────────────────────────────────────────────
+
 @Composable
 private fun PipeCellView(
     cell: PipeCell, idx: Int, size: Dp, t: GameTheme,
     inFlow: Boolean, onRotate: (Int) -> Unit,
 ) {
-    val rotDeg      by animateFloatAsState(cell.rot * 90f,
-        spring(Spring.DampingRatioMediumBouncy, stiffness = 400f), label = "pipe_r")
+    val rotDeg by animateFloatAsState(
+        cell.rot * 90f,
+        spring(Spring.DampingRatioMediumBouncy, stiffness = 400f), label = "pipe_r"
+    )
     val borderColor by animateColorAsState(
         if (inFlow) t.primary else t.border, tween(200), label = "pipe_b"
     )
+
+    val isX = cell.type == 'X'
 
     Box(
         Modifier.size(size)
@@ -218,27 +335,25 @@ private fun PipeCellView(
             .background(t.surface)
             .border(1.dp, borderColor, RoundedCornerShape(5.dp))
             .then(
-                if (!cell.fixed && !cell.locked)
+                if (!cell.fixed && !cell.locked && !isX)
                     Modifier.clickable { onRotate(idx) }
                 else Modifier
             ),
         contentAlignment = Alignment.Center
     ) {
-        when (cell.type) {
-            '#'  -> Text("🪨", fontSize = (size.value * 0.4f).sp)
-            'N'  -> Text("⛲", fontSize = (size.value * 0.45f).sp)
-            'O'  -> Text("🏺", fontSize = (size.value * 0.45f).sp)
-            else -> Canvas(Modifier.size(size * 0.9f).rotate(rotDeg)) {
-                drawPipe(cell.type, inFlow, t)
-            }
+        Canvas(Modifier.size(size * 0.9f).rotate(rotDeg)) {
+            drawPipe(cell.type, inFlow, t)
         }
-        if (cell.locked) Text("🔒", fontSize = (size.value * 0.2f).sp,
-            modifier = Modifier.align(Alignment.TopEnd).padding(1.dp))
+        if (cell.locked) {
+            Text("🔒", fontSize = (size.value * 0.2f).sp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(1.dp))
+        }
     }
 }
 
 private fun DrawScope.drawPipe(type: Char, lit: Boolean, t: GameTheme) {
-    val w = size.width; val h = size.height; val cx = w / 2f; val cy = h / 2f
+    val w = size.width; val h = size.height
+    val cx = w / 2f; val cy = h / 2f
     val pW = w * 0.24f; val fW = w * 0.13f
     val pipe  = Color(0xFF2D3548)
     val fluid = if (lit) t.primary else Color.Transparent
@@ -250,21 +365,15 @@ private fun DrawScope.drawPipe(type: Char, lit: Boolean, t: GameTheme) {
     if (ports[2]) { drawRect(pipe,  Offset(cx - pW/2, cy), Size(pW, h - cy));   drawRect(fluid, Offset(cx - fW/2, cy), Size(fW, h - cy)) }
     if (ports[3]) { drawRect(pipe,  Offset(0f, cy - pW/2), Size(cx, pW));       drawRect(fluid, Offset(0f, cy - fW/2), Size(cx, fW)) }
 
-    // Center hub — larger and more prominent for X pipes
     val hubRadius = if (type == 'X') pW * 1.0f else pW * 0.8f
-    val hubColor = Color(0xFF3D4560)
-    drawCircle(hubColor, hubRadius, Offset(cx, cy))
+    drawCircle(Color(0xFF3D4560), hubRadius, Offset(cx, cy))
 
     if (lit) {
-        val glowRadius = if (type == 'X') fW * 1.2f else fW * 0.9f
-        drawCircle(t.primary.copy(.6f), glowRadius, Offset(cx, cy))
+        val glowR = if (type == 'X') fW * 1.2f else fW * 0.9f
+        drawCircle(t.primary.copy(alpha = 0.6f), glowR, Offset(cx, cy))
         if (type == 'X') {
-            drawCircle(
-                t.primary.copy(.25f),
-                pW * 0.95f,
-                Offset(cx, cy),
-                style = Stroke(width = 1.5f)
-            )
+            drawCircle(t.primary.copy(alpha = 0.25f), pW * 0.95f, Offset(cx, cy),
+                style = Stroke(width = 1.5f))
         }
     }
 }

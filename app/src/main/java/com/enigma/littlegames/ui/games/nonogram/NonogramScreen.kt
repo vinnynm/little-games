@@ -5,17 +5,13 @@ package com.enigma.littlegames.ui.games.nonogram
 // Tap model:
 //   • Single tap  → toggle FILLED / EMPTY
 //   • Long press  → toggle CROSSED / EMPTY  (mark cell as definitely empty)
-// This makes the most common action (filling a cell) a simple tap, while
-// marking empties (which you need less often) is a long press.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -44,11 +40,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -150,12 +152,12 @@ fun NonogramScreen(hub: HubViewModel) {
                 }
             }
 
-            AnimatedVisibility(state.isComplete) {
+            AnimatedVisibility(visible = state.isComplete) {
                 Surface(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    color  = t.success.copy(.15f),
+                    color  = t.success.copy(alpha = 0.15f),
                     shape  = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, t.success.copy(.5f)),
+                    border = BorderStroke(1.dp, t.success.copy(alpha = 0.5f)),
                 ) {
                     Row(Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -324,7 +326,7 @@ private fun NonogramClueCell(
     isSolved: Boolean,
     t: GameTheme,
 ) {
-    val color = if (isSolved) t.success.copy(.8f) else t.textSecondary
+    val color = if (isSolved) t.success.copy(alpha = 0.8f) else t.textSecondary
     if (isCol) {
         Box(
             Modifier.width(size).height(height),
@@ -354,6 +356,7 @@ private fun NonogramClueCell(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Grid cell — tap fills, long press crosses
+// Uses drawBehind for efficient single-pass rendering
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -369,55 +372,98 @@ private fun NonogramCell(
     onTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
+    val density = LocalDensity.current
     val fillFraction by animateFloatAsState(
         if (mark == CellMark.FILLED || solFill) 1f else 0f,
         tween(100), label = "nono_fill",
     )
     val bgColor = when {
-        solFill  -> t.primary
-        isError  -> Color(0xFFE94560)
-        isHint   -> t.warning
+        solFill              -> t.primary
+        isError              -> Color(0xFFE94560)
+        isHint               -> t.warning
         mark == CellMark.FILLED -> t.primary
-        else     -> t.surface
+        else                 -> t.surface
     }
 
     Box(
         Modifier
             .size(size)
-            .background(t.surface)
-            .border(0.5.dp, t.border.copy(.35f))
-            .then(if (showRight)  Modifier.border(BorderStroke(1.5.dp, t.primary.copy(.4f))).padding(end = 1.5.dp) else Modifier)
-            .then(if (showBottom) Modifier.border(BorderStroke(1.5.dp, t.primary.copy(.4f))).padding(bottom = 1.5.dp) else Modifier)
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { onTap() },
                     onLongPress = { onLongPress() },
                 )
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        // Filled square
-        if (mark == CellMark.FILLED || solFill) {
-            Box(
-                Modifier
-                    .fillMaxSize(fillFraction)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(bgColor)
-            )
-        }
-        // X mark for CROSSED
-        if (mark == CellMark.CROSSED) {
-            Canvas(Modifier.fillMaxSize(.7f)) {
-                val p = size.toPx() * 0.7f * 0.5f
-                drawLine(Color.Gray.copy(.7f), Offset(0f, 0f), Offset(p * 2, p * 2), 2f)
-                drawLine(Color.Gray.copy(.7f), Offset(p * 2, 0f), Offset(0f, p * 2), 2f)
             }
-        }
-        // Hint pulse border
-        if (isHint) {
-            Box(Modifier.fillMaxSize().border(2.dp, t.warning, RoundedCornerShape(2.dp)))
-        }
-    }
+            .drawBehind {
+                val w = size.toPx()
+
+                // Background
+                drawRect(t.surface)
+
+                // Filled square with animation
+                if (fillFraction > 0f) {
+                    val inset = 1.dp.toPx()
+                    val fillSize = Size(
+                        (w - inset * 2) * fillFraction,
+                        (w - inset * 2) * fillFraction,
+                    )
+                    val offset = Offset(inset, inset)
+                    drawRect(
+                        color = bgColor,
+                        topLeft = offset,
+                        size = fillSize,
+                    )
+                }
+
+                // X mark for CROSSED
+                if (mark == CellMark.CROSSED) {
+                    val p = w * 0.3f
+                    val cx = w / 2f
+                    val cy = w / 2f
+                    val xColor = Color.Gray.copy(alpha = 0.7f)
+                    drawLine(
+                        color = xColor,
+                        start = Offset(cx - p, cy - p),
+                        end = Offset(cx + p, cy + p),
+                        strokeWidth = 2f,
+                        cap = StrokeCap.Round,
+                    )
+                    drawLine(
+                        color = xColor,
+                        start = Offset(cx + p, cy - p),
+                        end = Offset(cx - p, cy + p),
+                        strokeWidth = 2f,
+                        cap = StrokeCap.Round,
+                    )
+                }
+
+                // Border - thin on all sides
+                val thinColor = t.border.copy(alpha = 0.35f)
+                val thinWidth = 0.5.dp.toPx()
+                drawLine(thinColor, Offset(0f, 0f), Offset(w, 0f), thinWidth)
+                drawLine(thinColor, Offset(0f, w), Offset(w, w), thinWidth)
+                drawLine(thinColor, Offset(0f, 0f), Offset(0f, w), thinWidth)
+                drawLine(thinColor, Offset(w, 0f), Offset(w, w), thinWidth)
+
+                // Thick borders for 5-cell dividers
+                val thickColor = t.primary.copy(alpha = 0.4f)
+                val thickWidth = 1.5.dp.toPx()
+                if (showRight) {
+                    drawLine(thickColor, Offset(w, 0f), Offset(w, w), thickWidth)
+                }
+                if (showBottom) {
+                    drawLine(thickColor, Offset(0f, w), Offset(w, w), thickWidth)
+                }
+
+                // Hint pulse border
+                if (isHint) {
+                    drawRect(
+                        color = t.warning,
+                        style = Stroke(width = 2.dp.toPx()),
+                    )
+                }
+            },
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
