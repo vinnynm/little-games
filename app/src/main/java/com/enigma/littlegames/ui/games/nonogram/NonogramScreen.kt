@@ -2,30 +2,70 @@ package com.enigma.littlegames.ui.games.nonogram
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Nonogram Screen
-// Layout: clue column (left) | grid  /  clue row (top) | grid
-// Three-tap cycle: empty → filled → crossed (X)
-// Particle burst on solve reveals the hidden image.
+// Tap model:
+//   • Single tap  → toggle FILLED / EMPTY
+//   • Long press  → toggle CROSSED / EMPTY  (mark cell as definitely empty)
+// This makes the most common action (filling a cell) a simple tap, while
+// marking empties (which you need less often) is a long press.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.*
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.*
-import androidx.compose.ui.draw.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.*
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceAtLeast
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.enigma.littlegames.common.*
+import com.enigma.littlegames.common.GameTheme
+import com.enigma.littlegames.common.GameTopBar
+import com.enigma.littlegames.common.HubScreen
+import com.enigma.littlegames.common.HubViewModel
+import com.enigma.littlegames.common.LocalGameTheme
+import com.enigma.littlegames.common.MiniStat
+import com.enigma.littlegames.common.ParticleOverlay
+import com.enigma.littlegames.common.ThemedButton
 import com.enigma.littlegames.domain.Sfx
 import com.enigma.littlegames.domain.rememberParticleSystem
 
@@ -35,6 +75,7 @@ fun NonogramScreen(hub: HubViewModel) {
     val vm: NonogramViewModel = viewModel()
     val state     by vm.state.collectAsStateWithLifecycle()
     val particles = rememberParticleSystem()
+    val haptic    = LocalHapticFeedback.current
     var gridCenter by remember { mutableStateOf(Offset(400f, 500f)) }
 
     LaunchedEffect(state.isComplete) {
@@ -46,7 +87,6 @@ fun NonogramScreen(hub: HubViewModel) {
                 size        = state.size,
             )
             hub.sound.play(Sfx.VICTORY)
-            // Big burst — the image reveal moment
             particles.burst(
                 center = gridCenter,
                 colors = listOf(t.primary, t.secondary, t.accent, Color.White, t.warning),
@@ -92,6 +132,24 @@ fun NonogramScreen(hub: HubViewModel) {
                 MiniStat("TIME",   timer)
             }
 
+            // Gesture legend
+            Surface(
+                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                color  = t.surface,
+                shape  = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, t.border),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LegendItem("Tap", "■ Fill / clear", t.primary, t)
+                    Text("·", color = t.border, fontSize = 16.sp)
+                    LegendItem("Long press", "✕ Mark empty", t.textSecondary, t)
+                }
+            }
+
             AnimatedVisibility(state.isComplete) {
                 Surface(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -110,7 +168,7 @@ fun NonogramScreen(hub: HubViewModel) {
                 }
             }
 
-            // ── Nonogram grid with clue labels ────────────────────────────────
+            // ── Nonogram grid ─────────────────────────────────────────────────
             if (state.generating) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = t.primary)
@@ -125,20 +183,17 @@ fun NonogramScreen(hub: HubViewModel) {
                         }
                 ) {
                     val n = state.size
-
-                    // Work out how much space clue labels need
                     val maxRowClueLen = state.rowClues.maxOf { it.size }
                     val maxColClueLen = state.colClues.maxOf { it.size }
 
-                    // Clue area widths in dp — scale with grid size
                     val clueColW = (maxRowClueLen * 14 + 4).dp.coerceAtLeast(28.dp)
                     val clueRowH = (maxColClueLen * 14 + 4).dp.coerceAtLeast(28.dp)
 
-                    val gridW = maxWidth - clueColW
+                    val gridW    = maxWidth - clueColW
                     val cellSize = gridW / n
 
                     Column {
-                        // Top row: blank corner + column clues
+                        // Column clue headers
                         Row(Modifier.fillMaxWidth()) {
                             Spacer(Modifier.width(clueColW))
                             for (c in 0 until n) {
@@ -156,7 +211,7 @@ fun NonogramScreen(hub: HubViewModel) {
                             }
                         }
 
-                        // Puzzle rows: row clue + cells
+                        // Grid rows
                         for (r in 0 until n) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 NonogramClueCell(
@@ -179,15 +234,24 @@ fun NonogramScreen(hub: HubViewModel) {
                                     val is5row  = (r % 5 == 4 && r < n - 1)
 
                                     NonogramCell(
-                                        mark    = mark,
-                                        solFill = if (state.isComplete) solFill else false,
-                                        isError = isErr,
-                                        isHint  = isHint,
-                                        size    = cellSize,
-                                        showRight = is5col,
+                                        mark       = mark,
+                                        solFill    = if (state.isComplete) solFill else false,
+                                        isError    = isErr,
+                                        isHint     = isHint,
+                                        size       = cellSize,
+                                        showRight  = is5col,
                                         showBottom = is5row,
-                                        t = t,
-                                    ) { vm.toggleCell(r, c); hub.sound.play(Sfx.TAP) }
+                                        t          = t,
+                                        onTap = {
+                                            hub.sound.play(Sfx.TAP)
+                                            vm.tapCell(r, c)
+                                        },
+                                        onLongPress = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            hub.sound.play(Sfx.TAP)
+                                            vm.longPressCell(r, c)
+                                        },
+                                    )
                                 }
                             }
                         }
@@ -197,13 +261,11 @@ fun NonogramScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Legend + controls
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Legend
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     LegendDot(color = t.primary, label = "Filled")
@@ -221,7 +283,6 @@ fun NonogramScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Difficulty tabs
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                     .background(t.surface).padding(3.dp),
@@ -292,27 +353,28 @@ private fun NonogramClueCell(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Grid cell
+// Grid cell — tap fills, long press crosses
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun NonogramCell(
     mark: CellMark,
-    solFill: Boolean,         // true only after solve — triggers reveal color
+    solFill: Boolean,
     isError: Boolean,
     isHint: Boolean,
     size: Dp,
-    showRight: Boolean,       // draw thicker right border every 5 cells
+    showRight: Boolean,
     showBottom: Boolean,
     t: GameTheme,
-    onClick: () -> Unit,
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
 ) {
     val fillFraction by animateFloatAsState(
         if (mark == CellMark.FILLED || solFill) 1f else 0f,
-        tween(120), label = "nono_fill",
+        tween(100), label = "nono_fill",
     )
     val bgColor = when {
-        solFill  -> t.primary                  // solved reveal
+        solFill  -> t.primary
         isError  -> Color(0xFFE94560)
         isHint   -> t.warning
         mark == CellMark.FILLED -> t.primary
@@ -326,7 +388,12 @@ private fun NonogramCell(
             .border(0.5.dp, t.border.copy(.35f))
             .then(if (showRight)  Modifier.border(BorderStroke(1.5.dp, t.primary.copy(.4f))).padding(end = 1.5.dp) else Modifier)
             .then(if (showBottom) Modifier.border(BorderStroke(1.5.dp, t.primary.copy(.4f))).padding(bottom = 1.5.dp) else Modifier)
-            .clickable(onClick = onClick),
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onLongPress = { onLongPress() },
+                )
+            },
         contentAlignment = Alignment.Center,
     ) {
         // Filled square
@@ -342,8 +409,8 @@ private fun NonogramCell(
         if (mark == CellMark.CROSSED) {
             Canvas(Modifier.fillMaxSize(.7f)) {
                 val p = size.toPx() * 0.7f * 0.5f
-                drawLine(Color.Gray.copy(.6f), Offset(0f, 0f), Offset(p * 2, p * 2), 1.5f)
-                drawLine(Color.Gray.copy(.6f), Offset(p * 2, 0f), Offset(0f, p * 2), 1.5f)
+                drawLine(Color.Gray.copy(.7f), Offset(0f, 0f), Offset(p * 2, p * 2), 2f)
+                drawLine(Color.Gray.copy(.7f), Offset(p * 2, 0f), Offset(0f, p * 2), 2f)
             }
         }
         // Hint pulse border
@@ -376,5 +443,13 @@ private fun LegendDot(color: Color, label: String) {
         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(Modifier.size(10.dp).clip(RoundedCornerShape(2.dp)).background(color))
         Text(label, color = t.textSecondary, fontSize = 10.sp)
+    }
+}
+
+@Composable
+private fun LegendItem(gesture: String, action: String, color: Color, t: GameTheme) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(gesture, color = t.textSecondary, fontSize = 9.sp, letterSpacing = 0.5.sp)
+        Text(action, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
     }
 }

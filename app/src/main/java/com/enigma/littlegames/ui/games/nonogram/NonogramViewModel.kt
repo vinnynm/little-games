@@ -2,7 +2,9 @@ package com.enigma.littlegames.ui.games.nonogram
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Nonogram ViewModel
-// Manages puzzle state: player marks, errors, timer, hints via line solver.
+// Updated tap model:
+//   • Single tap: EMPTY → FILLED, FILLED → EMPTY, CROSSED → EMPTY
+//   • Long press: any cell → CROSSED (mark as definitely empty)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.lifecycle.ViewModel
@@ -25,10 +27,33 @@ data class NonogramState(
     val elapsedSecs: Long                   = 0L,
     val errorCount: Int                     = 0,
     val generating: Boolean                 = true,
-    // Hint: cells the solver says are forced (to flash for one beat)
     val hintCells: Set<Pair<Int, Int>>      = emptySet(),
     val hintUsed: Boolean                   = false,
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as NonogramState
+        if (size != other.size) return false
+        if (difficulty != other.difficulty) return false
+        if (isComplete != other.isComplete) return false
+        if (elapsedSecs != other.elapsedSecs) return false
+        if (errorCount != other.errorCount) return false
+        if (generating != other.generating) return false
+        if (hintUsed != other.hintUsed) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = size
+        result = 31 * result + difficulty.hashCode()
+        result = 31 * result + isComplete.hashCode()
+        result = 31 * result + elapsedSecs.hashCode()
+        result = 31 * result + errorCount
+        result = 31 * result + generating.hashCode()
+        return result
+    }
+}
 
 class NonogramViewModel : ViewModel() {
     private val _state = MutableStateFlow(NonogramState())
@@ -59,46 +84,63 @@ class NonogramViewModel : ViewModel() {
         startTimer()
     }
 
-    // Tap cycles: EMPTY → FILLED → CROSSED → EMPTY
-    fun toggleCell(r: Int, c: Int) {
+    /**
+     * Single tap: toggle between FILLED and EMPTY.
+     * EMPTY → FILLED
+     * FILLED → EMPTY
+     * CROSSED → EMPTY  (tap removes a cross mark)
+     */
+    fun tapCell(r: Int, c: Int) {
         val s = _state.value
         if (s.isComplete || s.generating) return
         val newGrid = s.playerGrid.map { it.clone() }.toTypedArray()
         newGrid[r][c] = when (s.playerGrid[r][c]) {
             CellMark.EMPTY   -> CellMark.FILLED
-            CellMark.FILLED  -> CellMark.CROSSED
+            CellMark.FILLED  -> CellMark.EMPTY
             CellMark.CROSSED -> CellMark.EMPTY
         }
+        applyGridUpdate(s, newGrid, r, c)
+    }
+
+    /**
+     * Long press: mark cell as CROSSED (definitely empty).
+     * EMPTY → CROSSED
+     * CROSSED → EMPTY  (long press again removes the cross)
+     * FILLED → CROSSED  (override a wrong fill)
+     */
+    fun longPressCell(r: Int, c: Int) {
+        val s = _state.value
+        if (s.isComplete || s.generating) return
+        val newGrid = s.playerGrid.map { it.clone() }.toTypedArray()
+        newGrid[r][c] = when (s.playerGrid[r][c]) {
+            CellMark.CROSSED -> CellMark.EMPTY
+            else             -> CellMark.CROSSED
+        }
+        applyGridUpdate(s, newGrid, r, c)
+    }
+
+    private fun applyGridUpdate(s: NonogramState, newGrid: Array<Array<CellMark>>, r: Int, c: Int) {
         val errors  = computeErrors(newGrid, s.solution, s.size)
         val wasErr  = (r to c) in s.errorCells
         val newCnt  = if ((r to c) in errors && !wasErr && newGrid[r][c] == CellMark.FILLED)
             s.errorCount + 1 else s.errorCount
-        val done    = errors.isEmpty() && newGrid.all { row ->
-            row.none { it == CellMark.EMPTY }
-        } && checkComplete(newGrid, s.solution, s.size)
+        val done    = errors.isEmpty() && checkComplete(newGrid, s.solution, s.size)
         _state.update { it.copy(playerGrid = newGrid, errorCells = errors,
             errorCount = newCnt, isComplete = done, hintCells = emptySet()) }
     }
 
-    // Hint: run the iterative solver and reveal one forced unknown cell
+    // Legacy entry point — kept so NonogramScreen can call either
+    fun toggleCell(r: Int, c: Int) = tapCell(r, c)
+
     fun hint() {
         val s = _state.value
-        val known = Array(s.size) { r ->
-            IntArray(s.size) { c ->
-                when (s.playerGrid[r][c]) {
-                    CellMark.FILLED  ->  1
-                    CellMark.CROSSED -> -1
-                    CellMark.EMPTY   ->  0
-                }
-            }
-        }
         val solved = iterativeSolve(s.rowClues, s.colClues, s.size)
         val hints  = mutableSetOf<Pair<Int, Int>>()
         for (r in 0 until s.size) for (c in 0 until s.size) {
-            if (known[r][c] == 0 && solved[r][c] != 0) hints.add(r to c)
+            val currentMark = s.playerGrid[r][c]
+            if (currentMark == CellMark.EMPTY && solved[r][c] != 0) hints.add(r to c)
         }
         _state.update { it.copy(hintCells = hints.take(3).toSet(), hintUsed = true) }
-        // Auto-clear hint flash after 1.5s
         viewModelScope.launch {
             delay(1500)
             _state.update { it.copy(hintCells = emptySet()) }
@@ -128,10 +170,7 @@ private fun computeErrors(
 ): Set<Pair<Int, Int>> {
     val errors = mutableSetOf<Pair<Int, Int>>()
     for (r in 0 until n) for (c in 0 until n) {
-        val mark = grid[r][c]
-        val sol  = solution[r][c]
-        // A FILLED cell where solution is empty = error
-        if (mark == CellMark.FILLED && !sol) errors.add(r to c)
+        if (grid[r][c] == CellMark.FILLED && !solution[r][c]) errors.add(r to c)
     }
     return errors
 }

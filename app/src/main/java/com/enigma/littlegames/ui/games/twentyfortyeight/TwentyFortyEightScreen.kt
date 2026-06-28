@@ -1,10 +1,21 @@
 package com.enigma.littlegames.ui.games.twentyfortyeight
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2048 Screen
-// Swipe gestures via detectDragGestures.
-// Tiles animate position with animateOffsetAsState.
-// Tile colour gradients keyed to value, themed to the active hub theme.
+// 2048 Screen  (fixed)
+//
+// Animation fixes vs. previous version:
+//   1. key(tile.id) wraps each tile so Compose can properly track remembered
+//      animation state across recompositions.  Without this, animateFloatAsState
+//      is re-created every frame and never has a chance to interpolate.
+//
+//   2. Tile positions animate with spring physics so slides feel snappy.
+//
+//   3. Tiles that just merged or just spawned play a quick pop (scale > 1 → 1)
+//      using the justMerged / justSpawned flags from TileData.
+//
+//   4. Offset is computed in pixels using Dp.toPx() inside the density scope,
+//      then applied with Modifier.offset { IntOffset(x.roundToInt(), …) }
+//      (the lambda-based overload avoids a recomposition per frame).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.*
@@ -31,6 +42,7 @@ import com.enigma.littlegames.common.*
 import com.enigma.littlegames.domain.Sfx
 import com.enigma.littlegames.domain.rememberParticleSystem
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun TwentyFortyEightScreen(hub: HubViewModel) {
@@ -40,7 +52,6 @@ fun TwentyFortyEightScreen(hub: HubViewModel) {
     val particles = rememberParticleSystem()
     var boardCenter by remember { mutableStateOf(Offset(400f, 600f)) }
 
-    // Win / merge sounds
     LaunchedEffect(state.isWon) {
         if (state.isWon) {
             val maxTile = state.tiles.maxOfOrNull { it.value } ?: 0
@@ -59,11 +70,8 @@ fun TwentyFortyEightScreen(hub: HubViewModel) {
             hub.recordTFEScore(state.score, maxTile)
         }
     }
-    LaunchedEffect(state.lastMergeScore) {
-        if (state.lastMergeScore > 0) hub.sound.play(Sfx.SUDOKU_PLACE)
-    }
 
-    // Drag state
+    // Drag tracking
     var dragAccum by remember { mutableStateOf(Offset.Zero) }
     val swipeThreshold = 40f
 
@@ -166,7 +174,15 @@ fun TwentyFortyEightScreen(hub: HubViewModel) {
                 val gap      = 6.dp
                 val cellSize = (maxWidth - gap * 5) / 4
 
-                // Empty cell grid background
+                // Pre-compute pixel metrics inside density scope once
+                val cellPx: Float
+                val gapPx: Float
+                with(LocalDensity.current) {
+                    cellPx = cellSize.toPx()
+                    gapPx  = gap.toPx()
+                }
+
+                // Empty slot grid background
                 Column(verticalArrangement = Arrangement.spacedBy(gap)) {
                     repeat(4) {
                         Row(
@@ -183,39 +199,19 @@ fun TwentyFortyEightScreen(hub: HubViewModel) {
                     }
                 }
 
-                // Tiles overlay (positioned absolutely)
+                // ── Tile layer ────────────────────────────────────────────────
+                // key(tile.id) is critical: it tells Compose which remembered
+                // animation state belongs to which tile.  Without it, every
+                // recomposition creates fresh animateFloatAsState instances that
+                // start at the target value and never animate.
                 state.tiles.forEach { tile ->
-                    val cellPx = with(LocalDensity.current) { cellSize.toPx() }
-                    val gapPx  = with(LocalDensity.current) { gap.toPx() }
-                    val targetX = tile.col * (cellPx + gapPx)
-                    val targetY = tile.row * (cellPx + gapPx)
-
-                    val animX by animateFloatAsState(targetX, spring(stiffness = Spring.StiffnessMedium), label = "tx_${tile.id}")
-                    val animY by animateFloatAsState(targetY, spring(stiffness = Spring.StiffnessMedium), label = "ty_${tile.id}")
-
-                    val scale by animateFloatAsState(
-                        1f, spring(Spring.DampingRatioMediumBouncy), label = "ts_${tile.id}"
-                    )
-
-                    Box(
-                        Modifier
-                            .absoluteOffset { IntOffset(animX.toInt(), animY.toInt()) }
-                            .size(cellSize)
-                            .scale(scale)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(tileColor(tile.value, t)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            "${tile.value}",
-                            color = if (tile.value <= 4) t.textSecondary else t.textPrimary,
-                            fontSize = when {
-                                tile.value < 100  -> (cellSize.value * 0.35f).sp
-                                tile.value < 1000 -> (cellSize.value * 0.28f).sp
-                                else              -> (cellSize.value * 0.22f).sp
-                            },
-                            fontWeight = FontWeight.Black,
-                            textAlign  = TextAlign.Center,
+                    key(tile.id) {
+                        AnimatedTile(
+                            tile     = tile,
+                            cellSize = cellSize,
+                            cellPx   = cellPx,
+                            gapPx    = gapPx,
+                            theme    = t,
                         )
                     }
                 }
@@ -223,7 +219,6 @@ fun TwentyFortyEightScreen(hub: HubViewModel) {
 
             Spacer(Modifier.height(12.dp))
 
-            // Swipe hint / controls
             Text(
                 "↑ ↓ ← →  Swipe to slide tiles",
                 color = t.textSecondary, fontSize = 12.sp, textAlign = TextAlign.Center,
@@ -245,8 +240,92 @@ fun TwentyFortyEightScreen(hub: HubViewModel) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AnimatedTile — a single tile that smoothly slides to its target cell and
+// pops when it first appears (spawn) or when it is the result of a merge.
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun AnimatedTile(
+    tile: TileData,
+    cellSize: Dp,
+    cellPx: Float,
+    gapPx: Float,
+    theme: GameTheme,
+) {
+    // Target pixel positions for this tile's current row/col
+    val targetX = tile.col * (cellPx + gapPx)
+    val targetY = tile.row * (cellPx + gapPx)
+
+    // animateFloatAsState keeps its own remembered state per key(tile.id).
+    // When the tile's row/col changes, targetX/Y change and the animation
+    // interpolates from the previous position.
+    val animX by animateFloatAsState(
+        targetValue    = targetX,
+        animationSpec  = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness    = Spring.StiffnessMedium,
+        ),
+        label = "tfe_x_${tile.id}",
+    )
+    val animY by animateFloatAsState(
+        targetValue    = targetY,
+        animationSpec  = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness    = Spring.StiffnessMedium,
+        ),
+        label = "tfe_y_${tile.id}",
+    )
+
+    // Pop animation: tiles that just spawned or just merged scale from
+    // 0.01 (spawn) or 1.15 (merge bounce) down to 1.0.
+    val popTarget = when {
+        tile.justSpawned -> 0.01f
+        tile.justMerged  -> 1.18f
+        else             -> 1.0f
+    }
+    var scaleTarget by remember { mutableStateOf(popTarget) }
+    // Trigger the pop immediately on composition
+    LaunchedEffect(tile.justSpawned, tile.justMerged) {
+        scaleTarget = popTarget   // start from pop position
+        scaleTarget = 1.0f        // then spring to normal size
+    }
+    val scale by animateFloatAsState(
+        targetValue   = scaleTarget,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness    = Spring.StiffnessMedium,
+        ),
+        label = "tfe_scale_${tile.id}",
+    )
+
+    Box(
+        Modifier
+            // Use the lambda offset overload — it reads animX/Y during the layout
+            // phase without triggering a recomposition, so the animation is
+            // purely a layout side-effect (no extra frame of composition lag).
+            .offset { IntOffset(animX.roundToInt(), animY.roundToInt()) }
+            .size(cellSize)
+            .scale(scale.coerceAtLeast(0.01f))
+            .clip(RoundedCornerShape(8.dp))
+            .background(tileColor(tile.value, theme)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "${tile.value}",
+            color = if (tile.value <= 4) theme.textSecondary else theme.textPrimary,
+            fontSize = when {
+                tile.value < 100  -> (cellSize.value * 0.35f).sp
+                tile.value < 1000 -> (cellSize.value * 0.28f).sp
+                else              -> (cellSize.value * 0.22f).sp
+            },
+            fontWeight = FontWeight.Black,
+            textAlign  = TextAlign.Center,
+        )
+    }
+}
+
 // ── Tile colours ──────────────────────────────────────────────────────────────
-// Progressive brightness keyed to tile value, blended with the active theme.
 
 private fun tileColor(value: Int, t: GameTheme): Color = when (value) {
     2     -> t.surface
