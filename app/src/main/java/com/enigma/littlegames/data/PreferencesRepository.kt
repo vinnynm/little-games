@@ -1,8 +1,10 @@
 package com.enigma.littlegames.data
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 4a — DataStore persistence
-// Added: ekWins, simonBest, tfeBest
+// Phase 4a+ — DataStore persistence
+// Bug fix (audit #10): slidingWins, nonogramWins, flowWins, mineWins were
+// tracked only in-memory in HubViewModel and reset on every process death.
+// Added proper DataStore keys + save/load for all four.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import android.content.Context
@@ -29,6 +31,12 @@ object PrefsKeys {
     val SIMON_BEST    = intPreferencesKey("simon_best")
     val TFE_BEST      = intPreferencesKey("tfe_best")
     val TFE_MAX_TILE  = intPreferencesKey("tfe_max_tile")
+    // Bug fix (audit #10) — previously unpersisted win counters
+    val SLIDING_WINS   = intPreferencesKey("sliding_wins")
+    val NONOGRAM_WINS  = intPreferencesKey("nonogram_wins")
+    val FLOW_WINS      = intPreferencesKey("flow_wins")
+    val MINE_WINS      = intPreferencesKey("mine_wins")
+    val SOKOBAN_LEVEL  = intPreferencesKey("sokoban_level")
 }
 
 data class AppPreferences(
@@ -44,6 +52,12 @@ data class AppPreferences(
     val simonBest: Int           = 0,
     val tfeBest: Int             = 0,
     val tfeMaxTile: Int          = 0,
+    // Bug fix (audit #10)
+    val slidingWins: Int         = 0,
+    val nonogramWins: Int        = 0,
+    val flowWins: Int            = 0,
+    val mineWins: Int            = 0,
+    val sokobanLevel: Int        = 1,
 )
 
 class PreferencesRepository(private val context: Context) {
@@ -63,6 +77,11 @@ class PreferencesRepository(private val context: Context) {
                 simonBest        = p[PrefsKeys.SIMON_BEST]    ?: 0,
                 tfeBest          = p[PrefsKeys.TFE_BEST]      ?: 0,
                 tfeMaxTile       = p[PrefsKeys.TFE_MAX_TILE]  ?: 0,
+                slidingWins      = p[PrefsKeys.SLIDING_WINS]  ?: 0,
+                nonogramWins     = p[PrefsKeys.NONOGRAM_WINS] ?: 0,
+                flowWins         = p[PrefsKeys.FLOW_WINS]     ?: 0,
+                mineWins         = p[PrefsKeys.MINE_WINS]     ?: 0,
+                sokobanLevel     = p[PrefsKeys.SOKOBAN_LEVEL] ?: 1,
             )
         }
 
@@ -78,4 +97,11 @@ class PreferencesRepository(private val context: Context) {
     suspend fun saveSimonBest(best: Int)    = context.dataStore.edit { it[PrefsKeys.SIMON_BEST]     = best  }
     suspend fun saveTFEBest(best: Int)      = context.dataStore.edit { it[PrefsKeys.TFE_BEST]       = best  }
     suspend fun saveTFEMaxTile(tile: Int)   = context.dataStore.edit { it[PrefsKeys.TFE_MAX_TILE]   = tile  }
+
+    // Bug fix (audit #10) — persist the four previously in-memory-only counters
+    suspend fun saveSlidingWins(wins: Int)  = context.dataStore.edit { it[PrefsKeys.SLIDING_WINS]  = wins  }
+    suspend fun saveNonogramWins(wins: Int) = context.dataStore.edit { it[PrefsKeys.NONOGRAM_WINS] = wins  }
+    suspend fun saveFlowWins(wins: Int)     = context.dataStore.edit { it[PrefsKeys.FLOW_WINS]     = wins  }
+    suspend fun saveMineWins(wins: Int)     = context.dataStore.edit { it[PrefsKeys.MINE_WINS]     = wins  }
+    suspend fun saveSokobanLevel(lvl: Int)  = context.dataStore.edit { it[PrefsKeys.SOKOBAN_LEVEL] = lvl   }
 }

@@ -7,34 +7,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-// ── Hex coordinate ────────────────────────────────────────────────────────────
-
-@JvmInline
-value class HexCoord(val packed: Long) {
-    constructor(q: Int, r: Int) : this((q.toLong() shl 32) or (r.toLong() and 0xFFFFFFFFL))
-
-    val q: Int get() = (packed shr 32).toInt()
-    val r: Int get() = packed.toInt()
-
-    fun neighbours(): List<HexCoord> = HEX_NEIGHBOURS.map { offset ->
-        HexCoord(q + offset.q, r + offset.r)
-    }
-
-    override fun toString(): String = "($q,$r)"
-
-    companion object {
-        private val HEX_NEIGHBOURS = listOf(
-            HexCoord(1, 0), HexCoord(-1, 0),
-            HexCoord(0, 1), HexCoord(0, -1),
-            HexCoord(1, -1), HexCoord(-1, 1),
-        )
-    }
-}
-
 // ── Cell ──────────────────────────────────────────────────────────────────────
 
-data class HexCell(
-    val coord: HexCoord,
+data class MineCell(
+    val row: Int,
+    val col: Int,
     val isMine: Boolean = false,
     val isRevealed: Boolean = false,
     val isFlagged: Boolean = false,
@@ -47,17 +24,18 @@ enum class MinesweeperPhase { IDLE, PLAYING, WON, LOST }
 enum class MineDifficulty(
     val label: String,
     val emoji: String,
-    val radius: Int,
-    val mineDensity: Float,
+    val rows: Int,
+    val cols: Int,
+    val mines: Int,
 ) {
-    EASY   ("Easy",   "🌿", 3, 0.10f),
-    MEDIUM ("Medium", "⚡", 4, 0.16f),
-    HARD   ("Hard",   "🔥", 5, 0.20f),
-    EXPERT ("Expert", "💀", 6, 0.25f),
+    EASY   ("Easy",   "🌿", 8,  8,  10),
+    MEDIUM ("Medium", "⚡", 10, 10, 18),
+    HARD   ("Hard",   "🔥", 12, 12, 30),
+    EXPERT ("Expert", "💀", 14, 14, 48),
 }
 
 data class MinesweeperState(
-    val board: Map<HexCoord, HexCell> = emptyMap(),
+    val board: List<List<MineCell>> = emptyList(),
     val phase: MinesweeperPhase = MinesweeperPhase.IDLE,
     val difficulty: MineDifficulty = MineDifficulty.MEDIUM,
     val mineCount: Int = 0,
@@ -65,73 +43,80 @@ data class MinesweeperState(
     val revealCount: Int = 0,
     val safeCount: Int = 0,
     val elapsedSecs: Long = 0L,
-    val explodedCell: HexCoord? = null,
+    val explodedCell: Pair<Int, Int>? = null,
 )
 
 class MinesweeperViewModel : ViewModel() {
+
     private val _state = MutableStateFlow(MinesweeperState())
     val state: StateFlow<MinesweeperState> = _state.asStateFlow()
+
     private var timerJob: Job? = null
 
     init { newGame(MineDifficulty.MEDIUM) }
 
+    // ── Lifecycle ────────────────────────────────────────────────────────────
+
     fun newGame(d: MineDifficulty) {
         timerJob?.cancel()
-        val coords = hexCoordsInRadius(d.radius)
-        val board = coords.associateWith { HexCell(it) }
+        val board = List(d.rows) { r -> List(d.cols) { c -> MineCell(r, c) } }
         _state.value = MinesweeperState(
-            board = board,
-            phase = MinesweeperPhase.IDLE,
-            difficulty = d,
+            board       = board,
+            phase       = MinesweeperPhase.IDLE,
+            difficulty  = d,
+            mineCount   = d.mines,
+            safeCount   = d.rows * d.cols - d.mines,
         )
     }
 
-    fun reveal(coord: HexCoord) {
+    // ── Interactions ─────────────────────────────────────────────────────────
+
+    fun reveal(row: Int, col: Int) {
         val s = _state.value
         if (s.phase == MinesweeperPhase.WON || s.phase == MinesweeperPhase.LOST) return
-        val cell = s.board[coord] ?: return
+        val cell = s.board.getOrNull(row)?.getOrNull(col) ?: return
 
-        // Chord reveal
+        // Chording: tap an already-revealed numbered cell to reveal its neighbours
         if (cell.isRevealed && cell.adjMines > 0) {
-            chordReveal(coord, s)
+            chordReveal(row, col)
             return
         }
-
         if (cell.isFlagged || cell.isRevealed) return
 
-        // First tap: generate board
         val board = if (s.phase == MinesweeperPhase.IDLE) {
-            generateBoard(s.difficulty, s.board.keys, safeZone = coord)
+            generateBoard(s.difficulty, safeRow = row, safeCol = col)
         } else {
             s.board
         }
 
-        val tapped = board[coord] ?: return
-
+        val tapped = board[row][col]
         if (tapped.isMine) {
             timerJob?.cancel()
             _state.update {
                 it.copy(
-                    board = revealAllMines(board, coord),
+                    board = revealAllMines(board, row, col),
                     phase = MinesweeperPhase.LOST,
-                    explodedCell = coord,
+                    explodedCell = row to col,
                 )
             }
             return
         }
 
-        performReveal(coord, board, wasFirstTap = s.phase == MinesweeperPhase.IDLE)
+        val wasFirstTap = s.phase == MinesweeperPhase.IDLE
+        val revealedBoard = floodReveal(board, row, col)
+        if (wasFirstTap) startTimer()
+        updateAfterReveal(revealedBoard)
     }
 
-    fun toggleFlag(coord: HexCoord) {
+    fun toggleFlag(row: Int, col: Int) {
         val s = _state.value
         if (s.phase == MinesweeperPhase.WON || s.phase == MinesweeperPhase.LOST) return
-        val cell = s.board[coord] ?: return
+        val cell = s.board.getOrNull(row)?.getOrNull(col) ?: return
         if (cell.isRevealed) return
 
         val newFlagged = !cell.isFlagged
-        val newBoard = s.board.toMutableMap()
-        newBoard[coord] = cell.copy(isFlagged = newFlagged)
+        val newBoard = s.board.map { r -> r.toMutableList() }
+        newBoard[row][col] = cell.copy(isFlagged = newFlagged)
 
         _state.update {
             it.copy(
@@ -141,80 +126,106 @@ class MinesweeperViewModel : ViewModel() {
         }
     }
 
-    private fun chordReveal(coord: HexCoord, s: MinesweeperState) {
-        val cell = s.board[coord] ?: return
-        val flagCount = coord.neighbours().count { s.board[it]?.isFlagged == true }
+    // ── Chord reveal ─────────────────────────────────────────────────────────
+
+    private fun chordReveal(row: Int, col: Int) {
+        val s = _state.value
+        val cell = s.board[row][col]
+        val neighbours = neighboursOf(row, col, s.difficulty.rows, s.difficulty.cols)
+        val flagCount = neighbours.count { (r, c) -> s.board[r][c].isFlagged }
         if (flagCount != cell.adjMines) return
 
-        var hitMine: HexCoord? = null
-        val toReveal = mutableListOf<HexCoord>()
+        var hit: Pair<Int, Int>? = null
+        var board = s.board
 
-        for (nb in coord.neighbours()) {
-            val nbCell = s.board[nb] ?: continue
-            if (nbCell.isFlagged || nbCell.isRevealed) continue
-            if (nbCell.isMine) {
-                hitMine = nb
-            } else {
-                toReveal.add(nb)
-            }
+        for ((r, c) in neighbours) {
+            val nb = board[r][c]
+            if (nb.isFlagged || nb.isRevealed) continue
+            if (nb.isMine) { hit = r to c; break }
         }
 
-        if (hitMine != null) {
+        if (hit != null) {
             timerJob?.cancel()
             _state.update {
                 it.copy(
-                    board = revealAllMines(s.board, hitMine),
+                    board = revealAllMines(board, hit.first, hit.second),
                     phase = MinesweeperPhase.LOST,
-                    explodedCell = hitMine,
+                    explodedCell = hit,
                 )
             }
             return
         }
 
-        val newBoard = s.board.toMutableMap()
-        for (c in toReveal) {
-            val revealed = floodReveal(c, newBoard)
-            for (rc in revealed) {
-                newBoard[rc] = newBoard[rc]!!.copy(isRevealed = true)
+        for ((r, c) in neighbours) {
+            val nb = board[r][c]
+            if (!nb.isFlagged && !nb.isRevealed) {
+                board = floodRevealBoard(board, r, c)
             }
         }
-
-        updateAfterReveal(newBoard, s)
+        updateAfterReveal(board)
     }
 
-    private fun performReveal(
-        coord: HexCoord,
-        board: Map<HexCoord, HexCell>,
-        wasFirstTap: Boolean,
-    ) {
-        val revealed = floodReveal(coord, board)
-        val newBoard = board.toMutableMap()
-        for (c in revealed) {
-            newBoard[c] = newBoard[c]!!.copy(isRevealed = true)
+    // ── Reveal helpers ───────────────────────────────────────────────────────
+
+    /** Reveal (row,col) and flood-fill outward through zero-adjacency cells. */
+    private fun floodReveal(board: List<List<MineCell>>, row: Int, col: Int): List<List<MineCell>> =
+        floodRevealBoard(board, row, col)
+
+    private fun floodRevealBoard(board: List<List<MineCell>>, row: Int, col: Int): List<List<MineCell>> {
+        val rows = board.size
+        val cols = board[0].size
+        val mutable = board.map { it.toMutableList() }
+        val queue = ArrayDeque<Pair<Int, Int>>()
+        queue.add(row to col)
+        val visited = HashSet<Pair<Int, Int>>()
+
+        while (queue.isNotEmpty()) {
+            val (r, c) = queue.removeFirst()
+            if (!visited.add(r to c)) continue
+            val cell = mutable[r][c]
+            if (cell.isRevealed || cell.isFlagged || cell.isMine) continue
+            mutable[r][c] = cell.copy(isRevealed = true)
+            if (cell.adjMines == 0) {
+                for ((nr, nc) in neighboursOf(r, c, rows, cols)) {
+                    if ((nr to nc) !in visited) queue.add(nr to nc)
+                }
+            }
         }
-        if (wasFirstTap) startTimer()
-        updateAfterReveal(newBoard, _state.value)
+        return mutable
     }
 
-    private fun updateAfterReveal(
-        newBoard: Map<HexCoord, HexCell>,
-        previousState: MinesweeperState,
-    ) {
-        val revealCount = newBoard.values.count { it.isRevealed && !it.isMine }
-        val safeCount = newBoard.values.count { !it.isMine }
-        val won = revealCount == safeCount
+    private fun updateAfterReveal(board: List<List<MineCell>>) {
+        val revealed = board.sumOf { row -> row.count { it.isRevealed && !it.isMine } }
+        val safe = board.sumOf { row -> row.count { !it.isMine } }
+        val won = revealed == safe
         if (won) timerJob?.cancel()
 
         _state.update {
             it.copy(
-                board = newBoard,
+                board = board,
                 phase = if (won) MinesweeperPhase.WON else MinesweeperPhase.PLAYING,
-                mineCount = newBoard.values.count { it.isMine },
-                safeCount = safeCount,
-                revealCount = revealCount,
+                revealCount = revealed,
+                safeCount = safe,
             )
         }
     }
+
+    private fun revealAllMines(
+        board: List<List<MineCell>>,
+        explodedRow: Int,
+        explodedCol: Int,
+    ): List<List<MineCell>> = board.map { row ->
+        row.map { cell ->
+            when {
+                cell.row == explodedRow && cell.col == explodedCol -> cell.copy(isRevealed = true)
+                cell.isMine && !cell.isFlagged -> cell.copy(isRevealed = true)
+                cell.isFlagged && !cell.isMine -> cell.copy(isWrongFlag = true)
+                else -> cell
+            }
+        }
+    }
+
+    // ── Timer ────────────────────────────────────────────────────────────────
 
     private fun startTimer() {
         timerJob?.cancel()
@@ -231,72 +242,34 @@ class MinesweeperViewModel : ViewModel() {
 
 // ── Board generation ──────────────────────────────────────────────────────────
 
-private fun generateBoard(
-    d: MineDifficulty,
-    coords: Set<HexCoord>,
-    safeZone: HexCoord,
-): Map<HexCoord, HexCell> {
-    val safeSet = (safeZone.neighbours().toSet() + safeZone)
-    val eligible = coords.filter { it !in safeSet }.shuffled()
-    val mineCount = (coords.size * d.mineDensity).toInt().coerceAtLeast(1)
+private fun generateBoard(d: MineDifficulty, safeRow: Int, safeCol: Int): List<List<MineCell>> {
+    val rows = d.rows
+    val cols = d.cols
+
+    // Never place a mine on the first-tapped cell or its immediate neighbours
+    val safeZone = (neighboursOf(safeRow, safeCol, rows, cols) + (safeRow to safeCol)).toSet()
+
+    val allCells = (0 until rows).flatMap { r -> (0 until cols).map { c -> r to c } }
+    val eligible = allCells.filter { it !in safeZone }.shuffled()
+    val mineCount = d.mines.coerceAtMost(eligible.size)
     val mineSet = eligible.take(mineCount).toSet()
 
-    return coords.associateWith { coord ->
-        val isMine = coord in mineSet
-        val adj = coord.neighbours().count { it in mineSet }
-        HexCell(coord, isMine = isMine, adjMines = adj)
-    }
-}
-
-private fun revealAllMines(
-    board: Map<HexCoord, HexCell>,
-    explodedCell: HexCoord,
-): Map<HexCoord, HexCell> {
-    return board.mapValues { (coord, cell) ->
-        when {
-            coord == explodedCell -> cell.copy(isRevealed = true)
-            cell.isMine && !cell.isFlagged -> cell.copy(isRevealed = true)
-            cell.isFlagged && !cell.isMine -> cell.copy(isWrongFlag = true)
-            else -> cell
+    return (0 until rows).map { r ->
+        (0 until cols).map { c ->
+            val isMine = (r to c) in mineSet
+            val adj = neighboursOf(r, c, rows, cols).count { it in mineSet }
+            MineCell(r, c, isMine = isMine, adjMines = adj)
         }
     }
 }
 
-// ── Flood-fill reveal ─────────────────────────────────────────────────────────
-
-private fun floodReveal(
-    start: HexCoord,
-    board: Map<HexCoord, HexCell>,
-): Set<HexCoord> {
-    val visited = HashSet<HexCoord>()
-    val queue = ArrayDeque<HexCoord>()
-    queue.add(start)
-
-    while (queue.isNotEmpty()) {
-        val coord = queue.removeFirst()
-        if (!visited.add(coord)) continue
-        val cell = board[coord] ?: continue
-        if (cell.isMine || cell.isRevealed) continue
-
-        if (cell.adjMines == 0) {
-            for (nb in coord.neighbours()) {
-                if (nb !in visited && board.containsKey(nb)) {
-                    queue.add(nb)
-                }
-            }
-        }
+private fun neighboursOf(row: Int, col: Int, rows: Int, cols: Int): List<Pair<Int, Int>> {
+    val result = ArrayList<Pair<Int, Int>>(8)
+    for (dr in -1..1) for (dc in -1..1) {
+        if (dr == 0 && dc == 0) continue
+        val nr = row + dr
+        val nc = col + dc
+        if (nr in 0 until rows && nc in 0 until cols) result.add(nr to nc)
     }
-    return visited
-}
-
-// ── Hex coordinate generation ─────────────────────────────────────────────────
-
-fun hexCoordsInRadius(radius: Int): Set<HexCoord> {
-    return buildSet {
-        for (q in -radius..radius) {
-            for (r in maxOf(-radius, -q - radius)..minOf(radius, -q + radius)) {
-                add(HexCoord(q, r))
-            }
-        }
-    }
+    return result
 }

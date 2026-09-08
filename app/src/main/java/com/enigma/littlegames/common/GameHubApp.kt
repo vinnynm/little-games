@@ -1,7 +1,10 @@
 package com.enigma.littlegames.common
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root composable — Phase 4d FINAL: all 13 navigable screens
+// Root composable — all 14 navigable screens
+// Bug fix (audit #1): added the ExplodingKittensScreen branch. The screen,
+// ViewModel, AI, and networking were all fully implemented but the router's
+// `when(s)` had no case for it, so the game was unreachable from the UI.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.*
@@ -30,6 +33,7 @@ import com.enigma.littlegames.ui.games.sokoban.SokobanScreen
 import com.enigma.littlegames.ui.games.flowfree.FlowFreeScreen
 import com.enigma.littlegames.ui.games.wordle.WordleScreen
 import com.enigma.littlegames.ui.games.minesweeper.MinesweeperScreen
+import com.enigma.littlegames.ui.games.explodingkittens.ui.ExplodingKittensScreen
 
 @Composable
 fun GameHubApp(hub: HubViewModel = viewModel()) {
@@ -65,6 +69,7 @@ fun GameHubApp(hub: HubViewModel = viewModel()) {
                     HubScreen.FlowFree           -> FlowFreeScreen(hub)
                     HubScreen.Wordle             -> WordleScreen(hub)
                     HubScreen.Minesweeper        -> MinesweeperScreen(hub)
+                    HubScreen.ExplodingKittens   -> ExplodingKittensScreen(hub)  // Bug fix (audit #1)
                 }
             }
 

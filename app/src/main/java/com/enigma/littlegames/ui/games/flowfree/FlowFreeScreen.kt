@@ -50,9 +50,6 @@ fun FlowFreeScreen(hub: HubViewModel) {
     val state     by vm.state.collectAsStateWithLifecycle()
     val particles = rememberParticleSystem()
 
-    // We need pixel-level board position for drag→cell conversion
-    var boardOffsetX by remember { mutableStateOf(0f) }
-    var boardOffsetY by remember { mutableStateOf(0f) }
     var boardPxSize  by remember { mutableStateOf(1f) }
     var boardCenter  by remember { mutableStateOf(Offset(400f, 500f)) }
 
@@ -103,11 +100,12 @@ fun FlowFreeScreen(hub: HubViewModel) {
                 MiniStat("MOVES",  "${state.moves}")
             }
 
-            AnimatedVisibility(state.isComplete) {
+            AnimatedVisibility(visible = state.isComplete) {
                 Surface(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    color  = t.success.copy(.15f), shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, t.success.copy(.5f)),
+                    color  = t.success.copy(alpha = 0.15f),
+                    shape  = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, t.success.copy(alpha = 0.5f)),
                 ) {
                     Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center) {
@@ -132,10 +130,8 @@ fun FlowFreeScreen(hub: HubViewModel) {
                             .aspectRatio(1f)
                             .onGloballyPositioned { coords ->
                                 val pos = coords.positionInRoot()
-                                boardOffsetX = pos.x
-                                boardOffsetY = pos.y
-                                boardPxSize  = coords.size.width.toFloat()
-                                boardCenter  = Offset(
+                                boardPxSize = coords.size.width.toFloat()
+                                boardCenter = Offset(
                                     pos.x + coords.size.width / 2f,
                                     pos.y + coords.size.height / 2f,
                                 )
@@ -143,44 +139,29 @@ fun FlowFreeScreen(hub: HubViewModel) {
                             .clip(RoundedCornerShape(10.dp))
                             .background(t.surface)
                             .border(1.dp, t.border, RoundedCornerShape(10.dp))
+                            // Single pointerInput — detectDragGestures handles everything
                             .pointerInput(puzzle) {
                                 detectDragGestures(
                                     onDragStart = { offset ->
-                                        val (r, c) = pixelToCell(
-                                            offset, boardPxSize, puzzle.size)
+                                        val (r, c) = pixelToCell(offset, boardPxSize, puzzle.size)
                                         vm.onDragStart(r, c)
                                     },
-                                    onDrag = { _, _ -> },   // handled via raw pointer
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        val (r, c) = pixelToCell(change.position, boardPxSize, puzzle.size)
+                                        vm.onDragMove(r, c)
+                                    },
                                     onDragEnd = { vm.onDragEnd() },
                                     onDragCancel = { vm.onDragEnd() },
                                 )
                             }
-                            .pointerInput(puzzle) {
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        event.changes.forEach { change ->
-                                            if (change.pressed) {
-                                                val localOffset = Offset(
-                                                    change.position.x,
-                                                    change.position.y,
-                                                )
-                                                val (r, c) = pixelToCell(localOffset, boardPxSize, puzzle.size)
-                                                vm.onDragMove(r, c)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                     ) {
-                        val cellSizePx = maxWidth / puzzle.size
-
                         Canvas(Modifier.fillMaxSize()) {
                             drawFlowBoard(
-                                state    = state,
-                                puzzle   = puzzle,
-                                cellPx   = size.width / puzzle.size,
-                                gridColor = t.border.copy(.3f),
+                                state     = state,
+                                puzzle    = puzzle,
+                                cellPx    = size.width / puzzle.size,
+                                gridColor = t.border.copy(alpha = 0.3f),
                             )
                         }
                     }
@@ -260,7 +241,7 @@ private fun DrawScope.drawFlowBoard(
             val cy = r * cellPx + cellPx / 2f
             if (idx == 0) pathObj.moveTo(cx, cy) else pathObj.lineTo(cx, cy)
         }
-        drawPath(pathObj, colour.copy(.85f), style = Stroke(
+        drawPath(pathObj, colour.copy(alpha = 0.85f), style = Stroke(
             width = strokeW,
             cap   = StrokeCap.Round,
             join  = StrokeJoin.Round,
@@ -275,9 +256,9 @@ private fun DrawScope.drawFlowBoard(
         val colour = FLOW_COLOURS.getOrElse(colourId) { Color.White }
         val radius = cellPx * 0.36f
         drawCircle(colour, radius, Offset(cx, cy))
-        drawCircle(colour.copy(.4f), radius, Offset(cx, cy),
+        drawCircle(colour.copy(alpha = 0.4f), radius, Offset(cx, cy),
             style = Stroke(width = cellPx * 0.06f))
-        drawCircle(Color.White.copy(.25f), radius * 0.4f, Offset(cx, cy))
+        drawCircle(Color.White.copy(alpha = 0.25f), radius * 0.4f, Offset(cx, cy))
     }
 }
 

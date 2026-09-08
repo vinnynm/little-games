@@ -12,11 +12,18 @@ package com.enigma.littlegames.ui.games.killerSudoku
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.*
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -27,6 +34,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -92,7 +100,11 @@ fun KillerSudokuScreen(hub: HubViewModel) {
 
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize().systemBarsPadding().background(t.background).padding(horizontal = 12.dp),
+            Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .background(t.background)
+                .padding(horizontal = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             val timer = remember(state.elapsedSecs) {
@@ -110,7 +122,9 @@ fun KillerSudokuScreen(hub: HubViewModel) {
             )
 
             Row(
-                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 MiniStat("ERRORS",  "${state.errorCount}")
@@ -120,7 +134,9 @@ fun KillerSudokuScreen(hub: HubViewModel) {
 
             AnimatedVisibility(state.isComplete) {
                 Surface(
-                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
                     color = t.success.copy(.15f), shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, t.success.copy(.5f))
                 ) {
@@ -136,7 +152,9 @@ fun KillerSudokuScreen(hub: HubViewModel) {
 
             // ── Grid ─────────────────────────────────────────────────────────
             if (state.generating) {
-                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Box(Modifier
+                    .fillMaxWidth()
+                    .weight(1f), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = t.primary)
                 }
             } else if (state.cages.isNotEmpty()) {
@@ -160,7 +178,9 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                     // ── PASS 1: cell backgrounds ──────────────────────────────
                     Column(Modifier.fillMaxSize()) {
                         for (row in 0..8) {
-                            Row(Modifier.weight(1f).fillMaxWidth()) {
+                            Row(Modifier
+                                .weight(1f)
+                                .fillMaxWidth()) {
                                 for (col in 0..8) {
                                     val cell      = state.board[row][col]
                                     val cage      = cageById[cellToCage[row to col]]
@@ -178,7 +198,9 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                                     SKCellView(
                                         row, col, cell, cage, isSel, isHi, isSameVal, isErr,
                                         showSum, state.difficulty, t,
-                                        Modifier.weight(1f).fillMaxHeight()
+                                        Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
                                     ) {
                                         hub.sound.play(Sfx.TAP)
                                         vm.select(row, col)
@@ -211,9 +233,14 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
-                    Modifier.clip(RoundedCornerShape(8.dp))
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
                         .background(if (state.noteMode) t.primary.copy(.2f) else t.surface)
-                        .border(1.dp, if (state.noteMode) t.primary else t.border, RoundedCornerShape(8.dp))
+                        .border(
+                            1.dp,
+                            if (state.noteMode) t.primary else t.border,
+                            RoundedCornerShape(8.dp)
+                        )
                         .clickable { hub.sound.play(Sfx.TAP); vm.toggleNotes() }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
@@ -221,7 +248,10 @@ fun KillerSudokuScreen(hub: HubViewModel) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
-                        Modifier.size(40.dp).clip(RoundedCornerShape(8.dp)).background(t.surface)
+                        Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(t.surface)
                             .border(1.dp, t.border, RoundedCornerShape(8.dp))
                             .clickable { hub.sound.play(Sfx.TAP); vm.place(0) },
                         contentAlignment = Alignment.Center
@@ -251,13 +281,19 @@ fun KillerSudokuScreen(hub: HubViewModel) {
 
             // Difficulty tabs
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(t.surface).padding(3.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(t.surface)
+                    .padding(3.dp),
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 SKDifficulty.entries.forEach { d ->
                     val sel = state.difficulty == d
                     Box(
-                        Modifier.weight(1f).clip(RoundedCornerShape(7.dp))
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(7.dp))
                             .background(if (sel) t.primary else Color.Transparent)
                             .clickable { hub.sound.play(Sfx.TAP); vm.newGame(d) }
                             .padding(vertical = 7.dp),
@@ -393,7 +429,8 @@ fun SKCellView(
         // Cage sum label in top-left corner of the first cell of each cage
         if (showCageSum && cage != null) {
             Box(
-                Modifier.align(Alignment.TopStart)
+                Modifier
+                    .align(Alignment.TopStart)
                     .background(accent.copy(.18f), RoundedCornerShape(bottomEnd = 3.dp))
                     .padding(horizontal = 2.dp, vertical = 1.dp)
             ) {
@@ -412,22 +449,16 @@ fun SKCellView(
                 fontWeight = if (cell.isGiven) FontWeight.Black else FontWeight.Medium
             )
             cell.notes.isNotEmpty() -> Column(
-                Modifier.fillMaxSize().padding(1.dp),
+                Modifier
+                    .fillMaxSize()
+                    .padding(1.dp),
                 verticalArrangement = Arrangement.SpaceEvenly
             ) {
-                for (nr in 0..2) Row(
-                    Modifier.weight(1f).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    for (nc in 0..2) {
-                        val n = nr * 3 + nc + 1
-                        if (n in cell.notes)
-                            Text("$n", color = accent.copy(.85f), fontSize = 7.sp, fontWeight = FontWeight.Bold)
-                        else
-                            Spacer(Modifier.weight(1f))
-                    }
-                }
+                NotesGrid(
+                    notes = cell.notes.toList(),
+                    textColor = accent.copy(.85f)
+                )
+
             }
         }
     }
@@ -446,21 +477,64 @@ fun SKNumBtn(n: Int, remaining: Int, isActive: Boolean, t: GameTheme, onClick: (
     )
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(36.dp)) {
         Box(
-            Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(bg)
-                .border(1.dp, if (remaining == 0) t.border else t.primary.copy(.25f), RoundedCornerShape(8.dp))
+            Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(bg)
+                .border(
+                    1.dp,
+                    if (remaining == 0) t.border else t.primary.copy(.25f),
+                    RoundedCornerShape(8.dp)
+                )
                 .clickable(enabled = remaining > 0, onClick = onClick),
             contentAlignment = Alignment.Center
         ) { Text("$n", color = txt, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-        Row(Modifier.padding(top = 2.dp).height(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier
+            .padding(top = 2.dp)
+            .height(4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             if (remaining == 0) Text("✓", color = t.primary, fontSize = 7.sp)
             else repeat(remaining.coerceAtMost(5)) {
                 Box(
-                    Modifier.size(2.5.dp).background(
-                        if (remaining <= 2) Color(0xFFE94560).copy(.7f) else t.primary.copy(.5f),
-                        CircleShape
-                    )
+                    Modifier
+                        .size(2.5.dp)
+                        .background(
+                            if (remaining <= 2) Color(0xFFE94560).copy(.7f) else t.primary.copy(.5f),
+                            CircleShape
+                        )
                 )
             }
         }
     }
+}
+
+
+@Composable
+fun NotesGrid(notes:List<Int> =listOf(1,2,3,4,5,6,7,8,9),textColor: Color = Color.Gray) {
+    val list = listOf(1,2,3,4,5,6,7,8,9)
+    LazyVerticalGrid(columns = GridCells.Fixed(3)) {
+        items(list){it->
+            Box(
+                modifier = Modifier
+                    .padding(2.dp)
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+
+            ){
+                if (notes.contains(it)){
+                    Text(
+                        it.toString(),
+                        autoSize = TextAutoSize.StepBased(),
+                        modifier= Modifier.align(alignment = Alignment.Center)
+                    )
+                }
+            }
+        }
+
+    }
+}
+
+@Preview
+@Composable
+private fun NotesGridPrev() {
+    NotesGrid()
 }

@@ -3,6 +3,17 @@ package com.enigma.littlegames.ui.games.kakuro
 // ─────────────────────────────────────────────────────────────────────────────
 // KakuroViewModel — procedural random Kakuro, integrated with Enigma Game Hub.
 //
+// Bug fixes applied (audit report):
+//   #3 (high) — inputDigit() computed `wasErr` respecting `s.showMistakes`
+//       but computed "is this now a conflict" with a hard-coded `true`. With
+//       mistake-highlighting turned off, `wasErr` was always false, so every
+//       keystroke on an already-conflicting cell counted as a brand-new
+//       error, wildly inflating errorCount. Both checks now consistently use
+//       `s.showMistakes`.
+//   #4 (medium) — `countErrors(puzzle, newDigits, true)` was computed and
+//       immediately discarded every keystroke (KakuroUiState has no `errors`
+//       field to store it in). Removed the dead computation entirely.
+//
 // Changes from the standalone app:
 //   • Uses KakuroGridSize / KakuroDifficulty (hub-package enums)
 //   • State is now a single StateFlow<KakuroUiState> (hub pattern)
@@ -135,12 +146,25 @@ class KakuroViewModel : ViewModel() {
             } else {
                 s.playerDigits + (cell to digit)
             }
-            val newNotes  = s.notes - cell
-            val wasErr    = cellHasConflict(s.puzzle, s.playerDigits, s.showMistakes, cell)
-            val newState  = s.copy(playerDigits = newDigits, notes = newNotes, canUndo = true)
-            val errs      = countErrors(puzzle, newDigits, true)
-            val newErrCnt = if (digit != 0 && cellHasConflict(puzzle, newDigits, true, cell) && !wasErr)
-                s.errorCount + 1 else s.errorCount
+            val newNotes = s.notes - cell
+
+            // Bug fix (audit #3): both the "was it an error before" and
+            // "is it an error now" checks must use the SAME showMistakes
+            // flag. The old code hard-coded `true` for the "now" check while
+            // `wasErr` respected s.showMistakes — with mistake-highlighting
+            // off, wasErr was always false, so every keystroke on an already
+            // conflicting cell (even re-entering the same digit) counted as
+            // a brand-new error and inflated errorCount indefinitely.
+            val wasErr   = cellHasConflict(s.puzzle, s.playerDigits, s.showMistakes, cell)
+            val isErrNow = cellHasConflict(puzzle, newDigits, s.showMistakes, cell)
+            val newErrCnt = if (digit != 0 && isErrNow && !wasErr) s.errorCount + 1 else s.errorCount
+
+            // Bug fix (audit #4): the old code also computed
+            // `countErrors(puzzle, newDigits, true)` here and threw the
+            // result away every keystroke (KakuroUiState has no field to
+            // store it in, and KakuroWhiteCell recomputes conflicts live
+            // per-cell instead). Removed the dead computation.
+
             _state.update { it.copy(
                 playerDigits = newDigits,
                 notes        = newNotes,
@@ -219,11 +243,6 @@ class KakuroViewModel : ViewModel() {
         if (run == null) return false
         val values = run.cells.mapNotNull { digits[it] }
         return values.size != values.toSet().size || values.sum() > run.sum
-    }
-
-    private fun countErrors(puzzle: KakuroPuzzleData, digits: Map<KPos, Int>, show: Boolean): Int {
-        if (!show) return 0
-        return puzzle.allWhiteCells.count { cellHasConflict(puzzle, digits, show, it) && digits.containsKey(it) }
     }
 
     private fun checkWin(puzzle: KakuroPuzzleData, digits: Map<KPos, Int>): Boolean {

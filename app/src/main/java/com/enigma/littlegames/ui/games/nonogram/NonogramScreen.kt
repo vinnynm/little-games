@@ -13,6 +13,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +71,7 @@ import com.enigma.littlegames.common.ParticleOverlay
 import com.enigma.littlegames.common.ThemedButton
 import com.enigma.littlegames.domain.Sfx
 import com.enigma.littlegames.domain.rememberParticleSystem
+import com.enigma.littlegames.ui.games.nanogram2.ui.NonogramGameScreen
 
 @Composable
 fun NonogramScreen(hub: HubViewModel) {
@@ -176,6 +178,7 @@ fun NonogramScreen(hub: HubViewModel) {
                     CircularProgressIndicator(color = t.primary)
                 }
             } else {
+                /**
                 BoxWithConstraints(
                     Modifier
                         .fillMaxWidth()
@@ -258,7 +261,22 @@ fun NonogramScreen(hub: HubViewModel) {
                             }
                         }
                     }
+
                 }
+                */
+                NonogramGameScreen(
+                    nonogramState = state,
+                    onClick = {it->
+                        hub.sound.play(Sfx.TAP)
+                        vm.tapCell(it.first, it.second)
+                    },
+                    onLongClick = {it->
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        hub.sound.play(Sfx.TAP)
+                        vm.longPressCell(it.first, it.second)
+                    },
+                    gameTheme = t
+                )
             }
 
             Spacer(Modifier.height(8.dp))
@@ -390,10 +408,20 @@ private fun NonogramCell(
             .size(size)
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { onTap() },
-                    onLongPress = { onLongPress() },
+                    onTap= { onTap.invoke() },
+                    onLongPress = { onLongPress.invoke() },
                 )
             }
+            .combinedClickable(enabled =true){
+
+
+
+
+
+
+            }
+
+
             .drawBehind {
                 val w = size.toPx()
 
@@ -470,7 +498,7 @@ private fun NonogramCell(
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-private fun isLineComplete(marks: List<CellMark>, clues: List<Int>): Boolean {
+fun isLineComplete(marks: List<CellMark>, clues: List<Int>): Boolean {
     val runs = mutableListOf<Int>()
     var count = 0
     for (m in marks) {

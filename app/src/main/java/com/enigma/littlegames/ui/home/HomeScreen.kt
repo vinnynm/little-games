@@ -1,8 +1,13 @@
 package com.enigma.littlegames.ui.home
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Home Screen — Phase 4d FINAL: 10 games in 4 sections
+// Home Screen — 11 games in 4 sections
 // Logic Puzzles · Arcade · Word & Memory · Spatial
+// Bug fixes applied:
+//   #1 (critical) — Added the Exploding Kittens GameCard. It was fully built
+//       but had no card anywhere in the UI, so it was unreachable.
+//   #5 (high)     — Sokoban card said "30 levels to solve" while the pack
+//       actually ships 50 levels (SOKOBAN_LEVELS.size). Fixed the copy.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.core.*
@@ -51,7 +56,7 @@ fun HomeScreen(hub: HubViewModel) {
                 letterSpacing = 8.sp, color = t.primary.copy(alpha = glowAlpha))
             Text("GAME HUB", fontSize = 13.sp, letterSpacing = 6.sp,
                 color = t.textSecondary, fontWeight = FontWeight.Bold)
-            Text("10 GAMES", fontSize = 10.sp, letterSpacing = 4.sp,
+            Text("11 GAMES", fontSize = 10.sp, letterSpacing = 4.sp,
                 color = t.textSecondary.copy(.55f))
 
             Spacer(Modifier.height(24.dp))
@@ -124,6 +129,15 @@ fun HomeScreen(hub: HubViewModel) {
                 Color(0xFFFFB830),
                 if (ui.tfeScore > 0) "Best score: ${ui.tfeScore}" else "Swipe to play",
             ) { hub.navigate(HubScreen.TwentyFortyEight) }
+            Spacer(Modifier.height(12.dp))
+            // Bug fix (audit #1) — Exploding Kittens was fully implemented
+            // (AI opponent, pass-and-play, LAN multiplayer) but had no card
+            // anywhere in the UI, making it completely unreachable.
+            GameCard("💣", "EXPLODING KITTENS", "Don't draw the kitten",
+                "Play action cards, then draw. Avoid the Exploding Kitten or defuse it in time. AI, pass-and-play, and WiFi multiplayer.",
+                Color(0xFFE94560),
+                if (ui.ekWins > 0) "${ui.ekWins} wins" else "Last player standing wins",
+            ) { hub.navigate(HubScreen.ExplodingKittens) }
 
             Spacer(Modifier.height(20.dp))
 
@@ -150,9 +164,9 @@ fun HomeScreen(hub: HubViewModel) {
             Spacer(Modifier.height(12.dp))
 
             GameCard("📦", "SOKOBAN", "Push boxes onto targets",
-                "Plan ahead to push every box onto its goal. Undo any mistake. 30 handcrafted levels.",
+                "Plan ahead to push every box onto its goal. Undo any mistake. 50 handcrafted levels.",
                 Color(0xFFFFB830),
-                if (ui.sokobanLevel > 1) "Reached level ${ui.sokobanLevel}" else "30 levels to solve",
+                if (ui.sokobanLevel > 1) "Reached level ${ui.sokobanLevel}" else "50 levels to solve",
             ) { hub.navigate(HubScreen.Sokoban) }
             Spacer(Modifier.height(12.dp))
             GameCard("🧩", "SLIDING PUZZLE", "Slide tiles into order",
@@ -179,7 +193,7 @@ fun HomeScreen(hub: HubViewModel) {
                 ) {
                     Text("🏆", fontSize = 14.sp)
                     Spacer(Modifier.width(6.dp))
-                    Text("${ui.unlockedIds.size} / 41",
+                    Text("${ui.unlockedIds.size} / 44",
                         fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
                 OutlinedButton(

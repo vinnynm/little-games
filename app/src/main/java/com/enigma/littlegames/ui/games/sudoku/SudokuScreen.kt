@@ -8,6 +8,7 @@ package com.enigma.littlegames.ui.games.sudoku
 //   • Alternating 3×3 box shading retained for orientation aid
 // ─────────────────────────────────────────────────────────────────────────────
 
+import android.annotation.SuppressLint
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -31,6 +32,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.enigma.littlegames.domain.Sfx
 import com.enigma.littlegames.domain.rememberParticleSystem
 import com.enigma.littlegames.common.*
+import com.enigma.littlegames.ui.games.killerSudoku.NotesGrid
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Line weight constants — mirrors KillerSudokuScreen for visual consistency
@@ -42,6 +44,7 @@ private const val OUTER_BORDER_W = 4.0f
 private const val INNER_ALPHA    = 0.18f
 private const val BOX_ALPHA      = 0.50f
 
+@SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun SudokuScreen(hub: HubViewModel) {
     val t         = LocalGameTheme.current
@@ -325,19 +328,11 @@ private fun ClassicSudokuCell(
                 Modifier.fillMaxSize().padding(1.dp),
                 verticalArrangement = Arrangement.SpaceEvenly
             ) {
-                for (nr in 0..2) Row(
-                    Modifier.weight(1f).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    for (nc in 0..2) {
-                        val n = nr * 3 + nc + 1
-                        if (n in cell.notes)
-                            Text("$n", color = t.primary.copy(.85f), fontSize = 7.sp, fontWeight = FontWeight.Bold)
-                        else
-                            Spacer(Modifier.weight(1f))
-                    }
-                }
+                NotesGrid(
+                   notes = cell.notes.toList(),
+                    textColor =  t.primary.copy(.85f)
+                )
+
             }
         }
     }

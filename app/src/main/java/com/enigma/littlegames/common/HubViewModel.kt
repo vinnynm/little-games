@@ -1,9 +1,20 @@
 package com.enigma.littlegames.common
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HubViewModel — Phase 4d (FINAL): adds Flow Free, Wordle, Minesweeper.
-// Hub now contains 13 navigable screens (10 distinct game families).
-// ALL_GAMES requires wins in all 10 families.
+// HubViewModel — Bug-fix pass over the audit report:
+//
+//   #1 (critical) — Exploding Kittens was fully built (screen, viewmodel, AI,
+//       networking, recordEKWin()) but had NO HubScreen entry, so it was
+//       unreachable. Added HubScreen.ExplodingKittens + achievement unlocking.
+//   #6 (high)     — checkAllGames() silently omitted Minesweeper (and, since
+//       EK is now reachable, Exploding Kittens) from the "Decathlon" check,
+//       making that achievement unlock too easily. Both are now included.
+//   #10 (high)    — slidingWins / nonogramWins / flowWins / mineWins were
+//       only ever stored in in-memory HubUiState and reset on every process
+//       death. Now loaded from and written to PreferencesRepository.
+//   #5 (high)     — Sokoban has 50 levels, not 30; recordSokobanWin() now
+//       unlocks SOKO_MASTER at level >= 50 (see also Achievements.kt) and
+//       persists sokobanLevel via DataStore instead of only in memory.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import android.app.Application
@@ -27,17 +38,18 @@ sealed class HubScreen {
     object PipeFlow           : HubScreen()
     object KillerSudoku       : HubScreen()
     object Sudoku             : HubScreen()
-    object Kakuro             : HubScreen()
-    object Simon              : HubScreen()
-    object TwentyFortyEight   : HubScreen()
-    object SlidingPuzzle      : HubScreen()
-    object Nonogram           : HubScreen()
-    object Sokoban            : HubScreen()
-    object FlowFree           : HubScreen()   // NEW
-    object Wordle             : HubScreen()   // NEW
-    object Minesweeper        : HubScreen()   // NEW
-    object Settings           : HubScreen()
-    object AchievementsScreen : HubScreen()
+    object Kakuro              : HubScreen()
+    object Simon               : HubScreen()
+    object TwentyFortyEight    : HubScreen()
+    object SlidingPuzzle       : HubScreen()
+    object Nonogram             : HubScreen()
+    object Sokoban              : HubScreen()
+    object FlowFree              : HubScreen()
+    object Wordle                : HubScreen()
+    object Minesweeper           : HubScreen()
+    object ExplodingKittens      : HubScreen()   // Bug fix (audit #1) — was missing
+    object Settings              : HubScreen()
+    object AchievementsScreen    : HubScreen()
 }
 
 // ── UI state ──────────────────────────────────────────────────────────────────
@@ -99,6 +111,13 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
                         simonBest    = prefs.simonBest,
                         tfeScore     = prefs.tfeBest,
                         ekWins       = prefs.ekWins,
+                        // Bug fix (audit #10) — these four now come from DataStore
+                        // instead of staying at their in-memory default forever.
+                        slidingWins  = prefs.slidingWins,
+                        nonogramWins = prefs.nonogramWins,
+                        flowWins     = prefs.flowWins,
+                        mineWins     = prefs.mineWins,
+                        sokobanLevel = prefs.sokobanLevel,
                         soundEnabled = prefs.soundEnabled,
                         unlockedIds  = tracker.unlockedIds.toSet(),
                     )
@@ -164,7 +183,10 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun recordSimonScore(score: Int) {
-        if (score > _ui.value.simonBest) _ui.update { it.copy(simonBest = score) }
+        if (score > _ui.value.simonBest) {
+            _ui.update { it.copy(simonBest = score) }
+            viewModelScope.launch { repo.saveSimonBest(score) }
+        }
         tryUnlock(Achievements.SIMON_FIRST)
         if (score >= 10) tryUnlock(Achievements.SIMON_TEN)
         if (score >= 25) tryUnlock(Achievements.SIMON_MASTER)
@@ -172,7 +194,10 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun recordTFEScore(score: Int, maxTile: Int) {
-        if (score > _ui.value.tfeScore) _ui.update { it.copy(tfeScore = score) }
+        if (score > _ui.value.tfeScore) {
+            _ui.update { it.copy(tfeScore = score) }
+            viewModelScope.launch { repo.saveTFEBest(score); repo.saveTFEMaxTile(maxTile) }
+        }
         tryUnlock(Achievements.TFE_FIRST)
         if (maxTile >= 512)  tryUnlock(Achievements.TFE_512)
         if (maxTile >= 2048) tryUnlock(Achievements.TFE_2048)
@@ -180,7 +205,10 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun recordSlidingWin(size: Int, moves: Int) {
-        _ui.update { it.copy(slidingWins = it.slidingWins + 1) }
+        // Bug fix (audit #10) — now persisted, not just kept in memory.
+        val newWins = _ui.value.slidingWins + 1
+        _ui.update { it.copy(slidingWins = newWins) }
+        viewModelScope.launch { repo.saveSlidingWins(newWins) }
         tryUnlock(Achievements.SLIDE_FIRST)
         if (size >= 4) tryUnlock(Achievements.SLIDE_FOUR)
         if (size >= 5) tryUnlock(Achievements.SLIDE_EXPERT)
@@ -188,7 +216,10 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun recordNonogramWin(difficulty: String, errorCount: Int, elapsedSecs: Long, size: Int) {
-        _ui.update { it.copy(nonogramWins = it.nonogramWins + 1) }
+        // Bug fix (audit #10) — now persisted, not just kept in memory.
+        val newWins = _ui.value.nonogramWins + 1
+        _ui.update { it.copy(nonogramWins = newWins) }
+        viewModelScope.launch { repo.saveNonogramWins(newWins) }
         tryUnlock(Achievements.NONO_FIRST)
         if (errorCount == 0) tryUnlock(Achievements.NONO_PERFECT)
         if (size >= 20) tryUnlock(Achievements.NONO_EXPERT)
@@ -197,15 +228,23 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun recordSokobanWin(level: Int, moves: Int) {
-        if (level > _ui.value.sokobanLevel) _ui.update { it.copy(sokobanLevel = level) }
+        // Bug fix (audit #5 / #10) — sokobanLevel is now persisted, and the
+        // SOKO_MASTER threshold matches the real 50-level pack.
+        if (level > _ui.value.sokobanLevel) {
+            _ui.update { it.copy(sokobanLevel = level) }
+            viewModelScope.launch { repo.saveSokobanLevel(level) }
+        }
         tryUnlock(Achievements.SOKO_FIRST)
         if (level >= 10) tryUnlock(Achievements.SOKO_TEN)
-        if (level >= 30) tryUnlock(Achievements.SOKO_MASTER)
+        if (level >= 50) tryUnlock(Achievements.SOKO_MASTER)
         checkAllGames()
     }
 
     fun recordFlowFreeWin(difficulty: String, moves: Int) {
-        _ui.update { it.copy(flowWins = it.flowWins + 1) }
+        // Bug fix (audit #10) — now persisted, not just kept in memory.
+        val newWins = _ui.value.flowWins + 1
+        _ui.update { it.copy(flowWins = newWins) }
+        viewModelScope.launch { repo.saveFlowWins(newWins) }
         tryUnlock(Achievements.FLOW_FIRST)
         if (difficulty == "Expert") tryUnlock(Achievements.FLOW_EXPERT)
         checkAllGames()
@@ -220,20 +259,37 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun recordMinesweeperWin(difficulty: String, elapsedSecs: Long) {
-        _ui.update { it.copy(mineWins = it.mineWins + 1) }
+        // Bug fix (audit #10) — now persisted, not just kept in memory.
+        val newWins = _ui.value.mineWins + 1
+        _ui.update { it.copy(mineWins = newWins) }
+        viewModelScope.launch { repo.saveMineWins(newWins) }
         tryUnlock(Achievements.MINE_FIRST)
         if (difficulty == "Expert") tryUnlock(Achievements.MINE_EXPERT)
         if (elapsedSecs < 60) tryUnlock(Achievements.MINE_SPEED)
         checkAllGames()
     }
 
-    fun recordEKWin(winner: String, vsAI: Boolean) {
-        _ui.update { it.copy(ekWins = it.ekWins + 1) }
-        viewModelScope.launch { repo.saveEKWins(_ui.value.ekWins) }
+    fun recordEKWin(winner: String, vsAI: Boolean, hardAI: Boolean = false) {
+        // Bug fix (audit #1) — EK previously recorded wins but never unlocked
+        // any achievement, because no EK achievements existed. Fixed now that
+        // Achievements.kt defines EK_FIRST_WIN / EK_DEFUSE / EK_HARD_AI.
+        val newWins = _ui.value.ekWins + 1
+        _ui.update { it.copy(ekWins = newWins) }
+        viewModelScope.launch { repo.saveEKWins(newWins) }
+        tryUnlock(Achievements.EK_FIRST_WIN)
+        if (vsAI && hardAI) tryUnlock(Achievements.EK_HARD_AI)
         checkAllGames()
     }
 
-    // ── ALL_GAMES — all 10 distinct families ──────────────────────────────────
+    /** Call when a player successfully defuses an Exploding Kitten. */
+    fun recordEKDefuse() {
+        tryUnlock(Achievements.EK_DEFUSE)
+    }
+
+    // ── ALL_GAMES — all 12 distinct families ──────────────────────────────────
+    // Bug fix (audit #6): previously omitted Minesweeper (a fully shipped
+    // game) and, before fix #1, couldn't have included Exploding Kittens
+    // because it wasn't reachable. Both are included now.
     private fun checkAllGames() {
         val allDone = listOf(
             Achievements.LO_FIRST_WIN.id,
@@ -246,6 +302,8 @@ class HubViewModel(app: Application) : AndroidViewModel(app) {
             Achievements.SOKO_FIRST.id,
             Achievements.FLOW_FIRST.id,
             Achievements.WORD_FIRST.id,
+            Achievements.MINE_FIRST.id,
+            Achievements.EK_FIRST_WIN.id,
         ).all { tracker.isUnlocked(it) }
         if (allDone) tryUnlock(Achievements.ALL_GAMES)
     }

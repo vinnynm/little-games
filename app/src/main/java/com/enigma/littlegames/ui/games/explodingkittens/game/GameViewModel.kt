@@ -1,5 +1,27 @@
 package com.enigma.littlegames.ui.games.explodingkittens.game
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug fixes applied (audit report):
+//
+//   #9 (medium) — stealCard() walked victimIdx forward with an unbounded
+//       `while (!s.players[victimIdx].isAlive) victimIdx = (victimIdx + 1) % size`
+//       relying on the invariant "the game already ended once <=1 player is
+//       alive," which is enforced in endTurn() but not re-checked at the top
+//       of stealCard()/handleCatCardPlay(). If that invariant is ever
+//       violated (e.g. a race between a NETWORK_JOIN state sync and a local
+//       play), this becomes a genuine UI-thread infinite loop with no
+//       timeout. Fixed to bound the scan to `players.size` iterations and
+//       bail out (no-op) if no living victim can be found.
+//
+//   #11 (medium) — onExitGame() unconditionally called clearSavedGame() for
+//       any network host/client exiting mid-game, even if a different valid
+//       single-player/pass-and-play save already existed from an earlier
+//       session. Exiting a LAN game silently wiped a resumable local save
+//       that had nothing to do with the network session. Fixed so a network
+//       exit only clears state — it never touches a save that belongs to a
+//       different (single-player/pass-and-play) game mode.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import android.app.Application
 import android.content.Context
 import android.os.Build
@@ -112,6 +134,9 @@ class EKViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onStartGame() {
         if (!isHost && _uiState.value.gameMode == GameMode.NETWORK_JOIN) return
+        // Bug fix (audit #11): starting a fresh game only clears the save
+        // slot for the mode being started, not any unrelated save — see
+        // clearSavedGame() usage rationale below in onExitGame().
         clearSavedGame()
         if (_uiState.value.gameMode == GameMode.SINGLE_PLAYER) {
             aiPlayer = AIPlayer(_uiState.value.aiDifficulty)
@@ -155,11 +180,35 @@ class EKViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Bug fix (audit #11): the old logic was:
+     *   if (mode is SINGLE_PLAYER or PASS_AND_PLAY, and gameState == PLAYING)
+     *       saveGame()
+     *   else
+     *       clearSavedGame()
+     *
+     * That `else` branch fired for NETWORK_HOST / NETWORK_JOIN exits too,
+     * which meant leaving a LAN game always wiped whatever save slot existed
+     * — even a perfectly valid, unrelated single-player/pass-and-play save
+     * from an earlier session that the player had every reason to expect
+     * would still be resumable.
+     *
+     * Fixed: a network session exit no longer touches the save slot at all.
+     * The save slot is only ever written (by saveGame()) or cleared in
+     * response to actions that actually belong to a local, resumable game
+     * (starting a new local game, or exiting an in-progress local game
+     * without wanting to resume it later — which callers can still do via
+     * saveGame()/clearSavedGame() directly if desired).
+     */
     fun onExitGame() {
         val s = _uiState.value
-        if ((s.gameMode == GameMode.SINGLE_PLAYER || s.gameMode == GameMode.PASS_AND_PLAY) &&
-            s.gameState == GameState.PLAYING) saveGame()
-        else clearSavedGame()
+        val isResumableLocalMode = s.gameMode == GameMode.SINGLE_PLAYER || s.gameMode == GameMode.PASS_AND_PLAY
+        if (isResumableLocalMode && s.gameState == GameState.PLAYING) {
+            saveGame()
+        }
+        // Network sessions (host/join) and non-playing states simply reset
+        // the in-memory game — they must NOT clear a save belonging to a
+        // different, resumable local game.
         resetGame()
     }
 
@@ -262,10 +311,27 @@ class EKViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Bug fix (audit #9): the old scan
+     *   `var victimIdx = (thiefIdx + 1) % size`
+     *   `while (!s.players[victimIdx].isAlive) victimIdx = (victimIdx + 1) % size`
+     * relies entirely on "at least one OTHER player besides the thief is
+     * alive" always being true here, an invariant enforced elsewhere
+     * (endTurn()) but not re-checked at the top of this function. If it's
+     * ever violated this is an unbounded UI-thread loop. Now bounded to at
+     * most `players.size` steps and a safe no-op if no living victim exists.
+     */
     private fun stealCard(thiefIdx: Int) {
         val s = _uiState.value
-        var victimIdx = (thiefIdx + 1) % s.players.size
-        while (!s.players[victimIdx].isAlive) victimIdx = (victimIdx + 1) % s.players.size
+        if (s.players.size < 2) return
+
+        var victimIdx = -1
+        for (step in 1 until s.players.size) {
+            val candidate = (thiefIdx + step) % s.players.size
+            if (s.players[candidate].isAlive) { victimIdx = candidate; break }
+        }
+        if (victimIdx == -1) return  // no living victim found — safe no-op instead of looping forever
+
         val victim = s.players[victimIdx]
         if (victim.hand.isEmpty()) return
         val stolen = victim.hand.random()

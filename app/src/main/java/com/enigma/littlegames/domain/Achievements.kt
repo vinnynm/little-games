@@ -1,8 +1,15 @@
 package com.enigma.littlegames.domain
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 4d (FINAL) · Achievements — 41 total
-// Adds Flow Free (2), Wordle (3), Minesweeper (3) groups.
+// Achievements — 44 total (was 41)
+// Bug fixes applied per audit report:
+//   #1 — Added the missing Exploding Kittens achievement group (game was fully
+//        built but had no achievement entries at all).
+//   #5 — SOKO_MASTER previously said/unlocked at "30 levels" while
+//        SOKOBAN_LEVELS actually contains 50. Fixed description + threshold.
+//   #6 — ALL_GAMES ("Decathlon") description now accurately reflects the
+//        families actually checked in HubViewModel.checkAllGames() (which now
+//        includes Minesweeper and Exploding Kittens too).
 // ─────────────────────────────────────────────────────────────────────────────
 
 data class Achievement(
@@ -58,9 +65,11 @@ object Achievements {
     val NONO_SPEED     = Achievement("nono_speed",     "Fast Brush",          "Complete a 10×10 in under 5 minutes",           "⚡", hidden = true)
 
     // ── Sokoban ───────────────────────────────────────────────────────────────
+    // Bug fix (audit #5): the pack has 50 levels, not 30. SOKO_MASTER now
+    // matches the real content instead of unlocking two tiers early.
     val SOKO_FIRST     = Achievement("soko_first",     "Box Mover",           "Complete your first Sokoban level",             "📦")
     val SOKO_TEN       = Achievement("soko_ten",       "Warehouse Worker",    "Complete 10 Sokoban levels",                    "🏭", hidden = true)
-    val SOKO_MASTER    = Achievement("soko_master",    "Sokoban Master",      "Complete all 30 levels",                        "🥇", hidden = true)
+    val SOKO_MASTER    = Achievement("soko_master",    "Sokoban Master",      "Complete all 50 levels",                        "🥇", hidden = true)
 
     // ── Flow Free ─────────────────────────────────────────────────────────────
     val FLOW_FIRST     = Achievement("flow_first",     "Colour Connector",    "Solve your first Flow Free puzzle",             "🌈")
@@ -76,8 +85,13 @@ object Achievements {
     val MINE_EXPERT    = Achievement("mine_expert",    "Defusal Expert",      "Clear an Expert hex grid",                      "💣", hidden = true)
     val MINE_SPEED     = Achievement("mine_speed",     "Speed Sweeper",       "Clear any board in under 60 seconds",           "⚡", hidden = true)
 
+    // ── Exploding Kittens (audit #1 — was fully built but had zero achievements) ─
+    val EK_FIRST_WIN   = Achievement("ek_first_win",   "Survivor",            "Win your first game of Exploding Kittens",      "😸")
+    val EK_DEFUSE      = Achievement("ek_defuse",      "Close Call",          "Defuse an Exploding Kitten",                    "🛡️", hidden = true)
+    val EK_HARD_AI     = Achievement("ek_hard_ai",     "Outfoxed",            "Beat a Hard-difficulty AI opponent",            "🦊", hidden = true)
+
     // ── Hub / meta ────────────────────────────────────────────────────────────
-    val ALL_GAMES      = Achievement("all_games",      "Decathlon",           "Win at least once in all 10 game families",     "🎮", hidden = true)
+    val ALL_GAMES      = Achievement("all_games",      "Decathlon",           "Win at least once in all 12 game families",     "🎮", hidden = true)
     val THEME_EXPLORER = Achievement("theme_explorer", "Chromatic",           "Try all 5 themes",                              "🎨", hidden = true)
 
     val all = listOf(
@@ -92,6 +106,7 @@ object Achievements {
         FLOW_FIRST, FLOW_EXPERT,
         WORD_FIRST, WORD_ACE, WORD_HARD,
         MINE_FIRST, MINE_EXPERT, MINE_SPEED,
+        EK_FIRST_WIN, EK_DEFUSE, EK_HARD_AI,
         ALL_GAMES, THEME_EXPLORER,
     )
 

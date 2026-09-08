@@ -4,7 +4,17 @@ package com.enigma.littlegames.ui.games.kakuro
 // KakuroGenerator — procedural random Kakuro puzzle generator.
 //
 // Ported from the standalone Kakuro app into the Enigma Game Hub package.
-// No logic changes; only the package declaration changes.
+//
+// Bug fix (audit #7 — medium):
+// buildFallback() used to build a `downCellLists` list containing an
+// obviously wrong self-referential entry — `KPos(3,3).let { KPos(2,3) }`,
+// which is really just a duplicate of the previous element "fixed" by a
+// trailing `.distinct()` — and then discarded that entire list in favor of
+// a separately hand-written `downRunsFixed`. The buggy list was never
+// actually used, but it was a landmine for anyone who later "cleaned up"
+// the apparently-unused variable without noticing `downRunsFixed` was the
+// real source of truth. Removed the dead/buggy list entirely; only the
+// correct `downRuns` (renamed from `downRunsFixed`) remains.
 //
 // How it works (three phases):
 //  1. buildLayout — scatter black wall cells at random, then repair any run
@@ -280,16 +290,15 @@ internal object KakuroGenerator {
             listOf(KPos(4,2), KPos(4,3), KPos(4,4), KPos(4,5)),
             listOf(KPos(5,3), KPos(5,4)),
         )
-        val downCellLists = listOf(
-            listOf(KPos(2,1), KPos(3,1)),
-            listOf(KPos(1,2), KPos(2,2), KPos(3,2), KPos(4,2)),
-            listOf(KPos(1,3), KPos(2,3), KPos(3,3).let { KPos(2,3) }, KPos(4,3), KPos(5,3)).distinct(),
-            listOf(KPos(2,4), KPos(3,4), KPos(4,4), KPos(5,4)),
-            listOf(KPos(1,5), KPos(2,5), KPos(3,5), KPos(4,5)),
-            listOf(KPos(1,6), KPos(3,6)),
-        )
-        // Rebuild as proper down runs avoiding duplicates
-        val downRunsFixed = listOf(
+
+        // Bug fix (audit #7): this used to be built twice — once as a buggy
+        // `downCellLists` containing a self-referential no-op entry
+        // (`KPos(3,3).let { KPos(2,3) }`, a disguised duplicate of the
+        // previous element, "fixed" via `.distinct()`), which was computed
+        // and then thrown away in favor of a second, correct list called
+        // `downRunsFixed`. The buggy list added confusion with zero benefit
+        // — only the correct down-run list is defined now.
+        val downRuns = listOf(
             listOf(KPos(2,1), KPos(3,1)),
             listOf(KPos(1,2), KPos(2,2), KPos(3,2), KPos(4,2)),
             listOf(KPos(1,3), KPos(2,3), KPos(4,3), KPos(5,3)),
@@ -297,8 +306,9 @@ internal object KakuroGenerator {
             listOf(KPos(1,5), KPos(2,5), KPos(3,5), KPos(4,5)),
             listOf(KPos(1,6), KPos(3,6)),
         )
+
         val acrossRuns = acrossCellLists.map { toRunInfo(it, sol, true) }
-        val downRuns   = downRunsFixed.map   { toRunInfo(it, sol, false) }
-        return KakuroPuzzleData(totalRows, totalCols, mask, sol, acrossRuns, downRuns)
+        val downRunsInfo = downRuns.map { toRunInfo(it, sol, false) }
+        return KakuroPuzzleData(totalRows, totalCols, mask, sol, acrossRuns, downRunsInfo)
     }
 }

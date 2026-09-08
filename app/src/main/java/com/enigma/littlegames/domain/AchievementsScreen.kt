@@ -1,7 +1,9 @@
 package com.enigma.littlegames.domain
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Achievements screen — Phase 4d FINAL: 41 achievements across 11 groups
+// Achievements screen — 44 achievements across 12 groups
+// Bug fix (audit #1): added the Exploding Kittens group so its 3 achievements
+// (which now actually exist — see Achievements.kt) are visible/trackable.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.compose.animation.core.*
@@ -22,7 +24,7 @@ import com.enigma.littlegames.common.HubScreen
 import com.enigma.littlegames.common.HubViewModel
 import com.enigma.littlegames.common.LocalGameTheme
 
-private const val TOTAL = 41
+private const val TOTAL = 44
 
 @Composable
 fun AchievementsScreen(hub: HubViewModel) {
@@ -41,6 +43,7 @@ fun AchievementsScreen(hub: HubViewModel) {
         "🌈 FLOW FREE"      to listOf(Achievements.FLOW_FIRST, Achievements.FLOW_EXPERT),
         "📝 WORDLE"         to listOf(Achievements.WORD_FIRST, Achievements.WORD_ACE, Achievements.WORD_HARD),
         "💣 MINESWEEPER"    to listOf(Achievements.MINE_FIRST, Achievements.MINE_EXPERT, Achievements.MINE_SPEED),
+        "💣 EXPLODING KITTENS" to listOf(Achievements.EK_FIRST_WIN, Achievements.EK_DEFUSE, Achievements.EK_HARD_AI),
         "🎮 HUB"            to listOf(Achievements.ALL_GAMES, Achievements.THEME_EXPLORER),
     )
 

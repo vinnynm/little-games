@@ -4,6 +4,14 @@ package com.enigma.littlegames.ui.games.sliding
 // Sliding Puzzle — ViewModel
 // Classic 15-puzzle (4×4) or 8-puzzle (3×3). Slide numbered tiles into order.
 // Scramble via random valid moves (always solvable). A* hint for one-step.
+//
+// Bug fix (audit #8 — medium):
+// This file used to declare TWO competing size enums — a dead `SlidingSize`
+// (THREE/FOUR/FIVE) that nothing referenced, and the actually-used
+// `SlideGrid` (EASY/MEDIUM/HARD/EXPERT). The dead enum was pure noise for
+// anyone reading the file and risked someone "fixing" the wrong one later.
+// Removed `SlidingSize` entirely; `SlideGrid` (with its label/scrambleMoves/
+// emoji) remains the single source of truth for sizing + difficulty.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import androidx.lifecycle.ViewModel
@@ -11,14 +19,6 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
-enum class SlidingSize( val label: String,val n: Int, val scrambleMoves: Int, val emoji: String) {
-    THREE("3×3", 3, 25,  "🌿"),
-    FOUR ("4×4", 4, 80,  "⚡"),
-    FIVE ("5×5", 5, 200, "💀"),
-    ;
-}
-
-// re-declare n properly since enum values conflict
 enum class SlideGrid(val size: Int, val label: String, val scrambleMoves: Int, val emoji: String) {
     EASY  (3, "Easy",   25,  "🌿"),
     MEDIUM(4, "Medium", 80,  "⚡"),

@@ -1,5 +1,17 @@
 package com.enigma.littlegames.ui.games.sokoban
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug fix (audit #2 — critical):
+// loadLevel() used to call itself recursively (on the call stack, not via a
+// loop) when parseLevel() threw, which:
+//   • risked a StackOverflowError on a run of consecutive bad levels, and
+//   • did nothing at all if the LAST level was the bad one — isLoading stayed
+//     true forever with no recovery path, softlocking the screen.
+// Fixed to use a bounded iterative scan across all levels, and to fall back
+// to a small guaranteed-valid hardcoded level if literally every level in
+// SOKOBAN_LEVELS fails to parse.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.*
 
@@ -116,6 +128,19 @@ fun parseLevel(levelDef: LevelDef): SokobanBoard {
         history = emptyList(),
     )
 }
+
+/** Tiny, hand-verified level used only if every entry in SOKOBAN_LEVELS
+ *  somehow fails to parse — guarantees loadLevel() can never softlock. */
+private val FALLBACK_LEVEL = LevelDef(
+    xsb = """
+        #####
+        #@$.#
+        #####
+    """.trimIndent(),
+    par = 1,
+    par2 = 2,
+    name = "Fallback",
+)
 
 private fun floodFillFloor(
     startR: Int, startC: Int,
@@ -298,24 +323,63 @@ class SokobanViewModel : ViewModel() {
 
     init { loadLevel(1) }
 
+    /**
+     * Bug fix (audit #2): previously called itself recursively on parse
+     * failure, which could stack-overflow on a run of bad levels and would
+     * softlock entirely if the LAST level in the list was the bad one (the
+     * old `if (lvl < SOKOBAN_LEVELS.size)` guard did nothing for that case).
+     *
+     * Now scans forward through the level list with a bounded loop (at most
+     * SOKOBAN_LEVELS.size attempts, so it can never loop forever even if
+     * every level is broken), and falls back to a small hardcoded
+     * known-good level as an absolute last resort so the screen can never
+     * get stuck on the loading spinner.
+     */
     fun loadLevel(lvl: Int) {
-        val idx = (lvl - 1).coerceIn(0, SOKOBAN_LEVELS.size - 1)
-        try {
-            val board = parseLevel(SOKOBAN_LEVELS[idx])
-            originalBoard = board
-            _state.update {
-                it.copy(
-                    board = board,
-                    level = lvl,
-                    isLoading = false,
-                    isComplete = false,
-                    isDeadlocked = false,
-                    elapsedSeconds = 0,
-                    levelName = SOKOBAN_LEVELS[idx].name,
-                )
+        val startIdx = (lvl - 1).coerceIn(0, SOKOBAN_LEVELS.size - 1)
+        var idx = startIdx
+        var attempts = 0
+
+        while (attempts < SOKOBAN_LEVELS.size) {
+            val levelDef = SOKOBAN_LEVELS[idx]
+            val board = try {
+                parseLevel(levelDef)
+            } catch (e: Exception) {
+                attempts++
+                idx = (idx + 1) % SOKOBAN_LEVELS.size
+                null
             }
-        } catch (e: Exception) {
-            if (lvl < SOKOBAN_LEVELS.size) loadLevel(lvl + 1)
+            if (board != null) {
+                originalBoard = board
+                _state.update {
+                    it.copy(
+                        board = board,
+                        level = idx + 1,
+                        isLoading = false,
+                        isComplete = false,
+                        isDeadlocked = false,
+                        elapsedSeconds = 0,
+                        levelName = levelDef.name,
+                    )
+                }
+                return
+            }
+        }
+
+        // Every level in the pack failed to parse — fall back to a
+        // guaranteed-valid hardcoded level instead of leaving isLoading=true.
+        val fallbackBoard = parseLevel(FALLBACK_LEVEL)
+        originalBoard = fallbackBoard
+        _state.update {
+            it.copy(
+                board = fallbackBoard,
+                level = startIdx + 1,
+                isLoading = false,
+                isComplete = false,
+                isDeadlocked = false,
+                elapsedSeconds = 0,
+                levelName = FALLBACK_LEVEL.name,
+            )
         }
     }
 
